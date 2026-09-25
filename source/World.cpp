@@ -111,7 +111,7 @@ void Sea::SpawnTransient( double antennaBearing, int direction, double rotationS
 	c.y     = r * std::cos( b );
 	c.vx    = 0.0;
 	c.vy    = 0.0;
-	c.sigma = 2.5f;
+	c.sigma = 6.0f;
 	c.life  = rotationSeconds > 0.0 ? 3.0 * rotationSeconds : 8.0;
 	transients.push_back( c );
 	if( transients.size() > 8 )

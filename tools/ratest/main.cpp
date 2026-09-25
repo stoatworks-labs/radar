@@ -9,8 +9,9 @@
         ratest --out /tmp/scope.png       the source, the defaults
         ratest --over --out /tmp/o.png    the Over effect on the harness's card
         ratest --list                     every parameter and its default
+        ratest --pipe [--frames N]        the source's frames, raw RGBA on stdout
+        ratest --over --pipe              raw frames in, raw frames out
         ratest --film N                   N frames, raw RGBA on stdout
-        ratest --pipe                     raw frames in (Over), raw frames out
         ratest --offline                  the checks that need no GL context (CI)
 
     `--script` is the fleet's cue format: `frame  Parameter Name  value` lines,
@@ -662,8 +663,12 @@ bool bindScript( RadarPlugin& plugin, const std::string& path, std::map< unsigne
 //===========================================================================
 // --pipe and --film. Raw RGBA, top row first, on the synthetic clock.
 //===========================================================================
-int runPipe( bool effect, int width, int height, double fps, const std::string& scriptPath, int filmFrames, bool beat,
-             const std::vector< std::string >& settings )
+/// `readStdin`: the Over effect's frames come in on stdin, one out per one in,
+/// until a partial frame or EOF. Otherwise frames are made -- `count` of them,
+/// or, with `count` 0, until the reader hangs up (so that mode only ever ends
+/// with exit 1; use a count for a take that can end cleanly).
+int runPipe( bool effect, int width, int height, double fps, const std::string& scriptPath, int count, bool readStdin,
+             bool beat, const std::vector< std::string >& settings )
 {
 	Rig rig( effect );
 	rig.fps = fps;
@@ -695,9 +700,9 @@ int runPipe( bool effect, int width, int height, double fps, const std::string& 
 
 	Bytes in( static_cast< size_t >( width ) * height * 4 );
 	Floats picture( in.size() );
-	for( int index = 0; filmFrames < 0 || index < filmFrames; ++index )
+	for( int index = 0; readStdin || count <= 0 || index < count; ++index )
 	{
-		if( filmFrames < 0 )
+		if( readStdin )
 		{
 			size_t filled = 0;
 			while( filled < in.size() )
@@ -1357,9 +1362,10 @@ int runPersist( const Perturb& perturb )
 		       fmt( "%dx%d  %d frames over 1.6 rotations: flash (tau %.3f s, x%.1f) off by at most %.2e relative, afterglow "
 		            "(tau %.2f s) %.2e (bound 8 ulp)",
 		            raster.w, raster.h, frames, tauF, aFlash, worstF, tauA, worstA ) );
-		Check( std::fabs( repaintFlash - 1.0 ) <= 1e-4,
+		//The ratio of two such values: 16 ulp.
+		Check( std::fabs( repaintFlash - 1.0 ) <= 16.0 * kUlp,
 		       fmt( "%dx%d  60/RPM = %.3f s later the beam is back: the flash returns to %.6f of the first paint's level "
-		            "(at the same age)",
+		            "(at the same age; bound 16 ulp)",
 		            raster.w, raster.h, period, repaintFlash ) );
 	}
 	return Verdict();
@@ -1558,12 +1564,14 @@ int runOver( const Perturb& perturb )
 			const double centroidDeg = sw > 0.0 ? ( sb / sw ) * binDeg : 999.0;
 			//The pixel grid is symmetric about the square's axis to the pixel
 			//(its edges were placed on whole pixels either side of the centre
-			//column), so the centroid is exact to a small fraction of a bin.
-			const bool bearingOk = sw > 0.0 && std::fabs( centroidDeg ) <= 0.25 * binDeg;
+			//line), and the polar samples are mirror pairs about it, so the
+			//centroid is exact up to the float sine/cosine of +-theta: 0.01
+			//bin covers that many times over.
+			const bool bearingOk = sw > 0.0 && std::fabs( centroidDeg ) <= 0.01 * binDeg;
 			Check( rangeOk && bearingOk,
-			       fmt( "%dx%d  square at %.0f deg, %.2f: echo's centroid %+.4f deg off the bearing (bound %.3f); half-power edges "
+			       fmt( "%dx%d  square at %.0f deg, %.2f: echo's centroid %+.2e deg off the bearing (bound %.4f); half-power edges "
 			            "at %.4f..%.4f, predicted %.4f..%.4f (edges + L/2, bound %.4f)",
-			            w, h, s.bearingDeg, s.range, centroidDeg, 0.25 * binDeg, gotNear, gotFar, nearEdge + 0.5 * L,
+			            w, h, s.bearingDeg, s.range, centroidDeg, 0.01 * binDeg, gotNear, gotFar, nearEdge + 0.5 * L,
 			            farEdge + 0.5 * L, tolRange ) );
 		}
 
@@ -2006,7 +2014,7 @@ int main( int argc, char** argv )
 	bool beat = false, effect = false;
 	std::string mode, scriptPath, clipPath;
 	int filmFrames = -1;
-	bool sizeGiven = false;
+	bool sizeGiven = false, framesGiven = false;
 
 	for( int i = 1; i < argc; ++i )
 	{
@@ -2024,8 +2032,9 @@ int main( int argc, char** argv )
 			             "  --beat            feed a beat every half second into the Audio buffer\n"
 			             "  --set \"Name=V\"    set a parameter by its display name. Repeatable.\n"
 			             "  --list            every parameter and its default\n"
-			             "  --pipe            raw RGBA frames in (Over) and out\n"
-			             "  --film N          N frames, raw RGBA on stdout\n"
+			             "  --pipe            raw RGBA out: the source makes --frames N (0/absent: until the\n"
+			             "                    reader hangs up); the Over effect takes frames in on stdin\n"
+			             "  --film N          N frames, raw RGBA on stdout (the Over on its card)\n"
 			             "  --script PATH     cues for --pipe/--film: 'frame Name value'\n\n"
 			             "  checks: --arc --pulse --sweep --persist --r4 --over-check --prime --resize --clock --state\n"
 			             "          --sweep-law --cues --names (no GL)   --negative   --bench\n"
@@ -2037,7 +2046,10 @@ int main( int argc, char** argv )
 		else if( argument == "--set" && hasNext )
 			settings.push_back( argv[ ++i ] );
 		else if( argument == "--frames" && hasNext )
-			frames = std::atoi( argv[ ++i ] );
+		{
+			frames      = std::atoi( argv[ ++i ] );
+			framesGiven = true;
+		}
 		else if( argument == "--fps" && hasNext )
 			fps = std::strtod( argv[ ++i ], nullptr );
 		else if( argument == "--beat" )
@@ -2050,7 +2062,7 @@ int main( int argc, char** argv )
 			mode = "pipe";
 		else if( argument == "--film" && hasNext )
 		{
-			mode       = "pipe";
+			mode       = "film";
 			filmFrames = std::max( 1, std::atoi( argv[ ++i ] ) );
 		}
 		else if( argument == "--script" && hasNext )
@@ -2087,6 +2099,54 @@ int main( int argc, char** argv )
 	if( sizeGiven )
 		kRasters = { { width, height } };
 
+	if( mode == "expect" )
+	{
+		//A DRAFT of the fleet gate's expectation (plugin-bench/arena/expect/
+		//radar.json), from what the plugins really declare: defaults are the
+		//floats the constructors set, not rounded literals (containment's
+		//trap). Where a control needs a context to show, it says so.
+		std::printf( "{\n  \"plugin\": \"radar\",\n  \"dlls\": [\"Radar.dll\", \"Radar Over.dll\"],\n"
+		             "  \"register\": [\n    {\"name\": \"SW Radar\", \"uid\": \"RA01\", \"kind\": \"source\"},\n"
+		             "    {\"name\": \"SW Radar Over\", \"uid\": \"RA02\", \"kind\": \"effect\"}\n  ],\n  \"params\": {\n" );
+		for( bool over : { false, true } )
+		{
+			RadarPlugin plugin( over );
+			std::printf( "    \"%s\": [\n", over ? "SW Radar Over" : "SW Radar" );
+			const std::vector< NamedParameter > list = listParameters( plugin );
+			for( size_t i = 0; i < list.size(); ++i )
+			{
+				const NamedParameter& p = list[ i ];
+				std::string line = "      {\"name\": \"" + p.name + "\", ";
+				if( p.type == FF_TYPE_OPTION )
+					line += "\"type\": \"ParamChoice\", \"default\": \"" + std::string( plugin.GetParamElementName( p.index, static_cast< unsigned int >( std::lround( p.value ) ) ) ) + "\"";
+				else if( p.type == FF_TYPE_BUFFER )
+					line += "\"type\": \"ParamChoice\", \"default\": \"Composition\", \"requires\": \"audio\"";
+				else if( p.type == FF_TYPE_BOOLEAN )
+					line += std::string( "\"type\": \"ParamBoolean\", \"default\": " ) + ( p.value > 0.5f ? "true" : "false" );
+				else if( p.type == FF_TYPE_EVENT )
+					line += "\"type\": \"ParamEvent\"";
+				else if( p.type == FF_TYPE_TEXT )
+					line += "\"type\": \"ParamString\", \"default_pattern\": \"^Radar\\\\ v{version}\\\\ \\\\-\\\\ MIT\\\\ \\\\-\\\\ Stoatworks\\\\ Labs,\\\\ stoatworks\\\\-labs\\\\.com$\"";
+				else
+				{
+					const float lo = p.type == FF_TYPE_INTEGER ? plugin.GetParamRange( p.index ).min : 0.0f;
+					const float hi = p.type == FF_TYPE_INTEGER ? plugin.GetParamRange( p.index ).max : 1.0f;
+					line += fmt( "\"type\": \"ParamRange\", \"min\": %.1f, \"max\": %.1f, \"default\": %.17g", lo, hi, static_cast< double >( p.value ) );
+				}
+				if( p.name.rfind( "Audio ", 0 ) == 0 )
+					line += ", \"requires\": \"audio\"";
+				if( over && ( p.name == "Bearing Marks" || p.name == "Heading Line" ) )
+					line += ", \"needs\": {\"Scope Size\": 0.0}";
+				if( p.name == "Direction" || p.name == "RPM" || p.name == "Persistence" || p.name == "Flash" )
+					line += ", \"note\": \"acts over time: a still carrier and single grabs may read it DEAD (the gate's blind spot)\"";
+				line += i + 1 < list.size() ? "},\n" : "}\n";
+				std::printf( "%s", line.c_str() );
+			}
+			std::printf( over ? "    ]\n" : "    ],\n" );
+		}
+		std::printf( "  }\n}\n" );
+		return 0;
+	}
 	if( mode == "list" )
 	{
 		RadarPlugin plugin( effect );
@@ -2137,7 +2197,12 @@ int main( int argc, char** argv )
 	if( ran )
 		;
 	else if( mode == "pipe" )
-		result = runPipe( effect, width, height, fps, scriptPath, filmFrames, beat, settings );
+		//The fleet's two shapes: an effect is frames in, frames out (toner's);
+		//a source makes --frames of them, or runs until the reader hangs up
+		//(pattern's).
+		result = runPipe( effect, width, height, fps, scriptPath, framesGiven ? frames : 0, effect, beat, settings );
+	else if( mode == "film" )
+		result = runPipe( effect, width, height, fps, scriptPath, filmFrames, false, beat, settings );
 	else if( mode == "negative" )
 		result = runNegative();
 	else if( mode == "bench" )

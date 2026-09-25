@@ -38,7 +38,7 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 SWEEP = {
     "RPM": ("0.4", "0.9", [], []),
     "Beamwidth": ("0", "1", [], []),
-    "Sidelobes": ("0", "1", ["Gain=0.7", "Land=0", "Contacts=16"], []),
+    "Sidelobes": ("0", "1", ["Gain=0.55", "Noise=0", "Clutter=0", "Rain=0", "Land=0", "Contacts=16", "Beamwidth=0.85"], []),
     "Direction": ("0", "1", ["Persistence=0.3"], []),
     "Pulse Length": ("0", "1", [], []),
     "Range": ("0.3", "0.8", [], []),
@@ -46,7 +46,7 @@ SWEEP = {
     "STC": ("0", "1", [], []),
     "Clutter": ("0", "1", [], []),
     "Noise": ("0", "1", [], []),
-    "Contacts": ("0", "16", [], []),
+    "Contacts": ("0", "16", ["Land=0", "Beamwidth=0.6", "Pulse Length=0.8"], []),
     "Rain": ("0", "1", [], []),
     "Land": ("0", "1", [], []),
     "Seed": ("1", "2", [], []),
@@ -126,8 +126,10 @@ def parameters(ratest, effect):
     return names
 
 
-def sweep_one(ratest, scratch, effect, name):
+def sweep_one(ratest, scratch, effect, name, declared):
     low, high, context, extra = SWEEP[name]
+    # A context names controls of either plugin; each keeps its own.
+    context = [c for c in context if c.split("=")[0] in declared]
     tag = f"{'o' if effect else 's'}{abs(hash(name))}"
     a = scratch / f"{tag}-a.png"
     b = scratch / f"{tag}-b.png"
@@ -151,9 +153,10 @@ def main():
         print(f"{ratest} not found", file=sys.stderr)
         return 1
 
-    jobs = []
+    jobs, names = [], {}
     for effect in (False, True):
         declared = parameters(ratest, effect)
+        names[effect] = set(declared)
         unknown = [n for n in declared if n not in SWEEP and n not in SKIP]
         if unknown:
             # A new parameter with no sweep is a hole, not a pass.
@@ -169,7 +172,7 @@ def main():
     with tempfile.TemporaryDirectory() as scratch:
         scratch = pathlib.Path(scratch)
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            results = list(pool.map(lambda j: sweep_one(ratest, scratch, j[0], j[1]), jobs))
+            results = list(pool.map(lambda j: sweep_one(ratest, scratch, j[0], j[1], names[j[0]]), jobs))
     for effect, name, delta in results:
         who = "SW Radar Over" if effect else "SW Radar"
         if delta == 0.0:
