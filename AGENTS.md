@@ -348,8 +348,39 @@ Assumed, or not done:
   made to look right, not measured.
 - **The sweep and bench numbers** were taken while other builds shared the
   machine.
-- **No OpenFX port, no browser demo, no user guide.** The gate expectation in
+- **No OpenFX port.** The gate expectation in
   `docs/` is a draft nobody has run.
+
+## The browser demo (2026-09-25)
+
+`demo/` is <https://radar-demo.stoatworks-labs.com>, built to the fleet's
+`resolume-demo` kit rules. What a reader of it must know:
+
+- **The shaders are the plugin's**, all seven pieces, spliced by
+  `demo/tools/check_shaders.py --write` into `demo/shaders.js` and compared
+  character for character by the same script, which `tools/verify.sh` runs.
+  Negative-controlled once: `q * q` -> `q / q` in the copy fails it. The GLSL's
+  bounded `sine`/`cosine`/`bearingOf` stay; WebGL's trig is never used.
+- **The CPU half is a port that only a reader checks**: Controls.cpp's
+  conversions, `Crossed()`/`Column()`, the per-column Carry/Fade timing in
+  double, the clock's jump rule, World.cpp's contacts and rain drift (PCG with
+  `Math.imul`), `ringSpacingKm`, `lookOf`, `sincHalfPower`. Same buffer sizes
+  and formats (RG32F phosphor, `copyTexSubImage2D` back from the scratch).
+- **Differences, all said on the page:** no audio (Audio, Audio Strobe, Audio
+  Contacts absent -- with no spectrum the analyser never fires, so nothing
+  changes); Contacts and Seed are dropdowns, Seed 0-99; no About block; the
+  clock is the page's seconds, the unit vote is not ported; the Plugin switch
+  is a new instance with that constructor's defaults (five shared controls
+  differ); the Over's clip is the kit's premultiplied one; it needs
+  EXT_color_buffer_float and OES_texture_float_linear and refuses without.
+- **Seen, not isolated:** headless Chrome on SwiftShader logs an ANGLE
+  "GPU stall due to ReadPixels" performance WARNING a few times per browser
+  process. The page never calls readPixels; the likeliest source is the
+  float `copyTexSubImage2D`. It is not an error and the picture is right.
+- **The live page logs one console error that is not the page's**: the zone
+  injects an inline `/cdn-cgi/challenge-platform` script and the page's
+  `script-src 'self'` CSP blocks it, as on every `*-demo` host (fleet-wide,
+  recorded in the demo brief's sweep). Locally there are no errors.
 
 ## Open design questions
 

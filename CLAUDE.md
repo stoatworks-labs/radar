@@ -76,9 +76,22 @@ Read `AGENTS.md` before touching the sweep (`Sweep.h`), the per-column timing in
   constructors nothing references.
 - Local repo only: no GitHub remote, no tag, not registered on the website.
 
+## Browser demo
+- `demo/` is the page at https://radar-demo.stoatworks-labs.com (Cloudflare
+  Worker `radar-demo`, a ROUTE on a proxied AAAA 100:: record -- the zone's
+  custom domains are full; deleting the record takes the page dark with a green
+  deploy). `deploy.yml` redeploys it on a push to main; by hand:
+  `cf-run npx wrangler deploy`.
+- `demo/shaders.js` is GENERATED: after changing `source/Shaders.cpp` run
+  `python3 demo/tools/check_shaders.py --write`; verify.sh fails on drift.
+- The CPU half in `demo/plugin.js` (Controls, Sweep, the per-column timing,
+  World) is a hand port nobody checks but a reader: change it with the C++.
+- `demo/vendor/` is the shared kit: never edit it, re-vendor with
+  `stoatworks-backend/resolume-demo/sync.sh`.
+
 ## Not done yet
 - Never loaded into Resolume (oxbow selftest only). Never built on Windows. No
-  OpenFX port, no browser demo, no user guide.
+  OpenFX port.
 - `StoatworksAbout.h` and `ATTRIBUTIONS.md` are provisional hand copies.
 
 ## Diagnostics

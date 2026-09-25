@@ -64,6 +64,29 @@ step "Shaders"
 tools/glslc.sh || fail "a shader does not compile"
 
 #---------------------------------------------------------------------------
+step "Browser demo's shaders"
+#---------------------------------------------------------------------------
+# demo/shaders.js carries copies of source/Shaders.cpp for the page at
+# radar-demo.stoatworks-labs.com. A copy that drifts still paints a plausible
+# scope, so the drift has to fail here instead: rerun
+# `python3 demo/tools/check_shaders.py --write` after changing a shader. It
+# checks the shaders only: the CPU half in demo/plugin.js (the sweep, the
+# per-column timing, the sea, the conversions) is a hand port nothing but a
+# reader checks.
+if [[ -f demo/tools/check_shaders.py ]]; then
+	log="$( mktemp )"
+	if python3 demo/tools/check_shaders.py >"$log" 2>&1; then
+		echo "   $( tail -1 "$log" )"
+	else
+		tail -14 "$log"
+		fail "the demo's shaders have drifted from source/Shaders.cpp"
+	fi
+	rm -f "$log"
+else
+	echo "   skipped: no demo/"
+fi
+
+#---------------------------------------------------------------------------
 step "Submodule"
 #---------------------------------------------------------------------------
 if [[ ! -f external/ffgl/CMakeLists.txt ]]; then

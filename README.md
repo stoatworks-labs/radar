@@ -87,8 +87,9 @@ covering the frame. Rendered by `ratest`.</sub>
 It has **never been loaded into Resolume**, on macOS or Windows, and has never
 been built on Windows. `oxbow probe` reads the bundles as a host does (`SW Radar`
 / `RA01` / source, `SW Radar Over` / `RA02` / effect) and `oxbow selftest`
-renders 120 frames through each. No OpenFX port, no browser demo, no user
-guide yet. Built and measured on macOS (Apple Silicon, M4 Max).
+renders 120 frames through each. No OpenFX port yet; there is a
+[browser demo](https://radar-demo.stoatworks-labs.com/) (below). Built and
+measured on macOS (Apple Silicon, M4 Max).
 
 What is measured, on this machine, at 1280x720 and 320x180 on the GPU and at
 320x180 on Apple's software renderer:
@@ -132,7 +133,20 @@ What is **not** verified, and is the honest limit of this release:
   Range zooms the land and leaves the traffic).
 - The textbook physics (the radar equation, STC, c tau / 2) is cited from memory.
 
-No OpenFX port yet, no browser demo.
+No OpenFX port yet.
+
+## Browser demo
+
+**<https://radar-demo.stoatworks-labs.com/>** — both plugins, their own
+controls and defaults. The five render passes are the plugin's own GLSL,
+spliced unedited into `demo/shaders.js` (`demo/tools/check_shaders.py`, run by
+`tools/verify.sh`, fails on a changed character). The CPU half — the antenna
+and its crossed-bin rule, the per-column crossing timing, the clock, the
+contacts and the rain's drift, every conversion — is a JavaScript port in
+`demo/plugin.js` that **nothing checks but a reader**. There is no audio in a
+browser, so Audio, Audio Strobe and Audio Contacts are absent; Contacts and
+Seed are dropdowns (Seed 0–99). The Over runs on the page's generated clips.
+It is a demo, not the plugin, and the page says what it does not reproduce.
 
 ## Build
 
