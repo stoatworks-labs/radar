@@ -2,7 +2,9 @@
 
 > **AI-assisted project.** This codebase was created with [Claude](https://claude.com/claude-code)
 > (Anthropic), directed and reviewed by a human author. It has **never been
-> loaded into Resolume**, on macOS or Windows (see [Status](#status)). Everything
+> loaded into Resolume on macOS**; there it is loaded by [oxbow](https://github.com/stoatworks-labs/oxbow),
+> a real FFGL host that is not Resolume. On Windows both plugins pass the fleet's Arena gate in
+> Resolume Arena 7.27.1 on software rendering (see [Status](#status)). Everything
 > below is measured by an offline harness that drives the real plugin classes in
 > a headless GL context, on this Mac's GPU at two rasters and again on Apple's
 > software renderer. `ratest --arc` puts a point target on the scope and measures
@@ -82,14 +84,36 @@ covering the frame. Rendered by `ratest`.</sub>
 
 ## Status
 
-**v0.1.0, 2026-09-25, and honestly early.**
+**v0.1.0, released 25 September 2026, and honestly early.** There is a
+[user guide](https://stoatworks-labs.com/software/radar/guide/)
+([PDF](docs/USER-GUIDE.pdf)) and a [project page](https://stoatworks-labs.com/software/radar/).
 
-It has **never been loaded into Resolume**, on macOS or Windows, and has never
-been built on Windows. `oxbow probe` reads the bundles as a host does (`SW Radar`
-/ `RA01` / source, `SW Radar Over` / `RA02` / effect) and `oxbow selftest`
-renders 120 frames through each. No OpenFX port yet; there is a
-[browser demo](https://radar-demo.stoatworks-labs.com/) (below). Built and
-measured on macOS (Apple Silicon, M4 Max).
+It has **never been loaded into Resolume on macOS**. `oxbow probe` reads the
+bundles as a host does (`SW Radar` / `RA01` / source, `SW Radar Over` / `RA02` /
+effect) and `oxbow selftest` renders 120 frames through each. No OpenFX port;
+there is a [browser demo](https://radar-demo.stoatworks-labs.com/) (below). Built
+and measured on macOS (Apple Silicon, M4 Max).
+
+### In Resolume Arena, on Windows
+
+On Windows both plugins have been loaded: a build of this source (the DLLs release.yml built
+from the registered tree) loads, registers and renders in Resolume Arena 7.27.1 on software
+rendering (win-lab, Mesa llvmpipe, no GPU, no sound device), with every control matching what
+the plugins declare (29 and 27 host controls), Arena's log clean, in the fleet's Arena gate:
+15 of 15 checks, the audio rows skipped. Because the sweep turns, no two grabs of the picture
+are alike, so the gate's noise floor is high and it could confirm only some controls one at a
+time: 10 of the source's 21 valued controls and 9 of the effect's 20, the rest inconclusive (none
+dead). The harness's own sweep (every one of the 43 parameters moves the picture) carries the
+rest. Software rendering says nothing about a GPU or about speed.
+
+### What filming the release video found
+
+The video is rendered through `ratest --pipe` (the source) and `ratest --over --pipe`
+(Resolume's demo clips). Filming found no defect, and three facts now in the guide: at the
+defaults the rain hides behind the land and under the gain (Land 0 and +10 dB show the cells);
+a Range change under a long afterglow leaves the old map's ghost under the new one for
+seconds; and a regular beat every half second at 24 rpm is a fifth of a turn, so Audio
+Strobe's spokes stand still at five bearings.
 
 What is measured, on this machine, at 1280x720 and 320x180 on the GPU and at
 320x180 on Apple's software renderer:
@@ -118,11 +142,14 @@ the CPU.
 
 What is **not** verified, and is the honest limit of this release:
 
-- **Never in a host.** How 28 and 25 controls present in Resolume, the clock
-  unit it sends, its FFT bins and its events are all untested.
+- **Never in Resolume on macOS**, and on Windows only on software rendering with
+  no sound device: its FFT bins and real audio are untested in a host.
+- **A real P7's afterglow is a power law.** Jankowiak's compilation of the EIA/JEDEC
+  phosphor tables (checked for this release) lists P7's long component as an inverse
+  power law; here it is an exponential with the time constant you set.
 - **The phosphor is stretched to video rates.** Real P7 flashes for microseconds;
   here the flash lasts a few frames so the sweep's leading edge shows, and the
-  colours are from memory, not spectra.
+  colours are chosen by eye, not computed from spectra.
 - **Distributed returns are normalised.** A wider beam or a longer pulse blurs a
   coast; it does not brighten it, as it physically would. Point targets follow
   the radar equation exactly.
@@ -131,7 +158,8 @@ What is **not** verified, and is the honest limit of this release:
 - **The synthetic sea is made to look right**, not measured: the land's fBm, its
   shadow, the clutter law, the rain, the contacts' speeds (in scope units, so
   Range zooms the land and leaves the traffic).
-- The textbook physics (the radar equation, STC, c tau / 2) is cited from memory.
+- The textbook physics (the radar equation, STC, c tau / 2) was checked against
+  published summaries for this release, not against the textbook itself.
 
 No OpenFX port yet.
 

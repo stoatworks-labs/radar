@@ -27,7 +27,7 @@ east with the trail fading behind it.*
 > purpose, and the synthetic sea is made to look right, not measured (see Known limits).
 > It has **never been loaded into Resolume on macOS** — the one host it has run in there is the
 > fleet's own test host, `oxbow`, for 120 frames each.
-> On Windows it has not yet been loaded into Resolume Arena either; that check is pending.
+> On Windows both plugins have been loaded: a build of this source (the DLLs release.yml built from the registered tree) loads, registers and renders in Resolume Arena 7.27.1 on software rendering (win-lab, Mesa llvmpipe, no GPU, no sound device), with every control matching what the plugins declare (29 and 27 host controls), Arena's log clean, in the fleet's Arena gate: 15 of 15 checks, the audio rows skipped. Because the sweep turns, no two grabs of the picture are alike, so the gate's noise floor is high and it could confirm only some controls one at a time: 10 of the source's 21 valued controls and 9 of the effect's 20, the rest inconclusive (none dead). The harness's own sweep (every one of the 43 parameters moves the picture) carries the rest. Software rendering says nothing about a GPU or about speed.
 > Try it on a spare layer before you put it in a show.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human author.
@@ -327,7 +327,11 @@ It records the GL vendor, renderer and version at load, and which shader failed 
 - **Only ever run on an Apple M4 Max**, although the macOS build contains an Intel slice. On
   Windows, see the note at the top of this guide.
 - **No presets**, no OpenFX version.
-- **A browser demo** is in preparation at [radar-demo.stoatworks-labs.com](https://radar-demo.stoatworks-labs.com/).
+- **There is a browser demo** at [radar-demo.stoatworks-labs.com](https://radar-demo.stoatworks-labs.com/).
+  It is a port to a web page, not the plugin: the shaders run unedited in WebGL2, and the sweep's
+  crossing rule, the per-bearing timing, the clock and the sea's contacts and rain are rewritten
+  in JavaScript. It has no audio, so the audio controls are left off, and the page lists what
+  else it does not reproduce.
 
 ---
 

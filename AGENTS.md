@@ -140,8 +140,11 @@ resets the analyser, primed: the loud frame it lands on fires nothing.
   the two-plugin precedents: boreal put the Over group after the About block,
   so the day a user guide exists the new "User guide" button moves the
   effect's indices; flyback declared every control in both plugins, so the
-  effect has "inert" controls the gate must be told about. Here a new About
-  button appends at the end of both, and there are no inert controls.
+  effect has "inert" controls the gate must be told about. Here the About
+  block is last in both, so the User guide button moved no control (it sits
+  second INSIDE the About block, the generator's order, which moved the three
+  link buttons down one: harmless before the first tag), and there are no
+  inert controls.
   `--names` checks the About block is last.
 - **Controls added to the spec's list**: Seed and Land (the source's map),
   Threshold (the Over's clip), Audio Strobe / Audio Contacts (the audio's two
@@ -165,7 +168,14 @@ resets the analyser, primed: the loud frame it lands on fires nothing.
 - **One second** is the largest forward clock step taken as elapsed time
   (boreal's is a quarter): a radar at 2 fps should still turn. A frame that
   covers more than a rotation paints each bin once.
-- **Provisional About/ATTRIBUTIONS** hand copies with `guide = ""`.
+- **About and attributions are generated** since registration (2026-09-25):
+  `StoatworksAbout.h` by `sync-about.py`, `ATTRIBUTIONS.md` by
+  `sync-attributions.py`, `.github/FUNDING.yml` by `sync-funding.sh`, the issue
+  forms by `sync-issue-templates.py`. The User guide button made it 29 and 26
+  parameters. It did NOT append at the end: the generated About block puts it
+  SECOND (About, User guide, Project page, Source on GitHub, Support the work), so
+  the three link buttons moved down one in both plugins. No control moved, and
+  before a first tag that is harmless; the seeded Arena expectation has the real order.
 
 ## The traps
 
@@ -334,22 +344,49 @@ picture.
 
 Assumed, or not done:
 
-- **Never loaded into Resolume.** Unknown there: how the 28 and 25 parameters
-  present, the clock unit, the FFT bins, whether events arrive as 1 then 0.
-- **Never built on Windows.** CI and release workflows are adapted from
-  flyback and have not run.
+- **Never loaded into Resolume on macOS.** Unknown there: how the 29 and 26
+  parameters present, the clock unit, the FFT bins, whether events arrive as 1 then 0.
+- **Windows, in Resolume Arena 7.27.1** (win-lab, Mesa llvmpipe, no GPU, no sound
+  device, 2026-09-25): the DLLs release.yml built from f50bacb (the registered tree)
+  load from Extra Effects, register as `SW Radar` / `RA01` / source and `SW Radar
+  Over` / `RA02` / effect, all 29 + 27 host controls match the declaration
+  (`plugin-bench/arena/expect/radar.json`, seeded by `seed_expect.py` and annotated:
+  `requires: audio` on the three audio rows, integer probes for Contacts and Seed,
+  Bearing Marks/Heading Line `needs` Scope Size 0 in the Over), both render, Arena's log
+  stays clean: 15 of 15 checks, audio skipped, ONE run. Live: source Clutter, Gain,
+  Land, Persistence, Phosphor, RPM, Range, STC, Scope Size, Seed; Over Beamwidth, Gain,
+  Mix, Opacity, Persistence, Phosphor, RPM, Scope Size, Threshold. Everything else
+  INCONCLUSIVE, none dead: the sweep turns between grabs, so the floor is high (1.7
+  levels single-grab on the source, 39.7 on the Over, whose scope covers the frame) --
+  copperlist's class, the gate's blind spot. MSVC compiled it first time (release.yml
+  run 36154527564; the four pre-tag checks were clean: no `packed`/reserved words,
+  no `M_PI`, `<cmath>` included, no `far`/`near`, output alpha `mix(clip, 1, Mix)`).
 - **The phosphor's time constants are stretched** to video rates; the colours
-  are from memory of P7/P19/P1, not measured spectra.
-- **The radar equation, STC and the pulse are textbook**, cited from memory
-  (Skolnik), not re-checked this session. Distributed targets are normalised
+  are chosen by eye. Checked 2026-09-25 against Patrick Jankowiak's compilation of
+  the EIA/JEDEC phosphor tables (labguysworld.com/crt_phosphor_research.pdf, rev.
+  2010-02-26): P7 is a dual-colour cascade for radar (ZnS:Ag blue-white fluorescence
+  over (Zn,Cd)S:Cu yellow phosphorescence, peaks 440 and 558 nm, over a minute in low
+  light), P19 orange (KF,MgF2):Mn, P1 green 525 nm 20 ms. The same table lists P7's
+  long component as an INVERSE POWER LAW (after Dyall 1948); the plugin's afterglow
+  is an exponential. TEP116-C itself was not consulted.
+- **The radar equation, STC and the pulse are textbook**: checked 2026-09-25
+  against Wikipedia's sensitivity-time-control article and Cambridge Pixel's STC
+  note (1/R^4, a gain rising with range, c tau / 2 = 150 m/us); Skolnik not re-read. Distributed targets are normalised
   (a decision, above), so the surface's absolute brightness is a look, not a
   radar cross-section.
 - **The synthetic sea** (fBm land, rain cells, clutter law, contact speeds) is
   made to look right, not measured.
 - **The sweep and bench numbers** were taken while other builds shared the
   machine.
-- **No OpenFX port.** The gate expectation in
-  `docs/` is a draft nobody has run.
+- **No OpenFX port.** The user guide is `docs/USER-GUIDE.md` (the only copy anyone
+  edits; the PDF and the site page are generated by the website's `build_guides.py`).
+  `docs/arena-expect.json` was the build's untested draft (`ratest --expect`, with
+  `note` fields the gate does not read); it is now a copy of the gate's real
+  expectation, `plugin-bench/arena/expect/radar.json`, seeded by `seed_expect.py` from
+  the running Arena and annotated from the constructor. plugin-bench's copy is the
+  one the gate reads.
+- **Filming the release video** (`stoatworks-backend/video/projects/radar/`) found no
+  defect. three facts now in the guide: at the defaults the rain hides behind the land and under the gain (Land 0 and +10 dB show the cells); a Range change under a long afterglow leaves the old map's ghost under the new one for seconds; and a regular beat every half second at 24 rpm is a fifth of a turn, so Audio Strobe's spokes stand still at five bearings.
 
 ## The browser demo (2026-09-25)
 
@@ -382,14 +419,23 @@ Assumed, or not done:
   `script-src 'self'` CSP blocks it, as on every `*-demo` host (fleet-wide,
   recorded in the demo brief's sweep). Locally there are no errors.
 
-## Open design questions
+## Design questions settled at release (2026-09-25)
 
-- Should Beamwidth be the one-way (datasheet) width instead? The arc would then
-  be Beamwidth / sqrt 2 wide for the Gaussian.
-- Should distributed returns grow with pulse length and beamwidth, as they
-  physically do (so Pulse Length is also a gain on land and clutter)?
-- Should the Over effect keep the clip's colour in the echoes (a colour
-  radar) instead of the phosphor's?
+Each kept as built, filmed, and stated as a choice in the user guide:
+
+- **Beamwidth stays the two-way width** (the arc on the screen). The guide tells a
+  reader with a datasheet to divide by sqrt 2.
+- **Distributed returns stay normalised**: the video's Beamwidth and Pulse Length
+  beats show the coast blurring and not brightening, which is what an operator
+  wants from those two knobs; the guide says a real radar's land and clutter would
+  brighten too.
+- **Contacts stay in scope units**: the Range beat shows the coast zoom out while
+  the traffic keeps its size; the guide explains why.
+- **The Over's echoes stay in the phosphor's colour** (a radar sees reflectivity);
+  Mix puts the clip's colour back under them, and the video shows it.
+
+Still open:
+
 - Sector scan (back and forth over an arc) would suit weather and military
   looks; Direction has only Clockwise and Anticlockwise.
 - The source's traffic: ships and aircraft share one speed range in scope units.
