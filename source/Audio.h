@@ -20,10 +20,10 @@
 	video rate, not a signal source, so the smallest interval this can
 	resolve is a frame and a kick lands on the frame after the transient.
 
-	**Normalised against its own recent peak**, so the same Audio Flux means
-	the same brightening on a quiet stem and a mastered track. The cost is that a
-	long loud passage reads as "1" throughout, because relative to the last
-	few seconds it is.
+	**Normalised against its own recent peak**, so the same Audio Strobe means
+	the same spoke on a quiet stem and a mastered track (the strobe's strength
+	follows the latched kick). The cost is that a long loud passage reads as
+	"1" throughout, because relative to the last few seconds it is.
 */
 namespace radar::audio
 {

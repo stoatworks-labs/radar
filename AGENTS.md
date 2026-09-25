@@ -303,7 +303,8 @@ fail. All 11 are detected:
 copy of the tree and requires a named check to fail. **The GLSL mutation of
 record**: in `beam()`, `float g  = exp( -LN2 * q * q );` became
 `exp( -LN2 * q / q )` -- the Gaussian beam a constant 1/2 -- and **`--arc`
-caught it** (FWHM measured 0, 18 of 18 cases failed). Two more GLSL mutants
+caught it** (at Sidelobes 0 the measured FWHM is 0 degrees against 2: no
+half-power crossing at all). Two more GLSL mutants
 (the pulse running inward, caught by `--pulse`; the composite dividing by the
 fade, caught by `--persist`) and one C++ (the wedge starting a bin late,
 caught by `--sweep`) are caught too. This proves the harness drives the
