@@ -29,6 +29,42 @@ Over**, an effect that makes your clip the sea.
 scope, the sweep just past east with the trail fading behind it. Rendered by the
 plugin's offline harness (`ratest`), not captured from Resolume.</sub>
 
+<!-- downloads:start -->
+
+## Download
+
+**[v0.1.0](https://github.com/stoatworks-labs/radar/releases/tag/v0.1.0)** — prebuilt for macOS and Windows. Pick your platform:
+
+<details>
+<summary><b>macOS</b> — Universal (Apple Silicon + Intel)</summary>
+
+| Build | Download | Size |
+| --- | --- | --- |
+| Universal (Apple Silicon + Intel) · .dmg disk image | [`radar-0.1.0-macos-universal.dmg`](https://github.com/stoatworks-labs/radar/releases/download/v0.1.0/radar-0.1.0-macos-universal.dmg) | 458 KB |
+| Universal (Apple Silicon + Intel) · .zip archive | [`radar-macos-universal.zip`](https://github.com/stoatworks-labs/radar/releases/latest/download/radar-macos-universal.zip) | 404 KB |
+
+</details>
+
+<details>
+<summary><b>Windows</b> — x64</summary>
+
+| Build | Download | Size |
+| --- | --- | --- |
+| x64 · .exe installer | [`radar-0.1.0-windows-x86_64-setup.exe`](https://github.com/stoatworks-labs/radar/releases/download/v0.1.0/radar-0.1.0-windows-x86_64-setup.exe) | 238 KB |
+| x64 · .zip archive | [`radar-windows-x86_64.zip`](https://github.com/stoatworks-labs/radar/releases/latest/download/radar-windows-x86_64.zip) | 249 KB |
+
+</details>
+
+All builds, checksums and release notes: [github.com/stoatworks-labs/radar/releases](https://github.com/stoatworks-labs/radar/releases).
+
+macOS builds are signed and notarised and open normally. The Windows builds are unsigned, so SmartScreen warns once.
+
+<!-- downloads:end -->
+
+## Video
+
+[![Radar: a plan-position radar scope, as a source and an effect for Resolume](docs/video-thumb.png)](https://www.youtube.com/watch?v=BIsz5fO5fNg)
+
 ## The one idea
 
 **A radar scope does not show the sea. It shows the sea convolved with the
