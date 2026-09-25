@@ -124,7 +124,7 @@ jobs:
           rl_dmg "${{ matrix.name }}" out
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: radar-${{ matrix.name }}
           path: |
@@ -168,7 +168,7 @@ jobs:
           rl_nsis windows-x86_64 "$stage" --plain
           ls -l installers
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: radar-windows-installer
           path: installers/*
