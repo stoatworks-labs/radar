@@ -1,33 +1,25 @@
 # radar
 
 > **AI-assisted project.** This codebase was created with [Claude](https://claude.com/claude-code)
-> (Anthropic), directed and reviewed by a human author. It has **never been
-> loaded into Resolume on macOS**; there it is loaded by [oxbow](https://github.com/stoatworks-labs/oxbow),
-> a real FFGL host that is not Resolume. On Windows both plugins pass the fleet's Arena gate in
-> Resolume Arena 7.27.1 on software rendering (see [Status](#status)). Everything
-> below is measured by an offline harness that drives the real plugin classes in
-> a headless GL context, on this Mac's GPU at two rasters and again on Apple's
-> software renderer. `ratest --arc` puts a point target on the scope and measures
-> the arc it paints: its half-power width equals Beamwidth to **0.004 degrees**,
-> at two ranges, with and without sidelobes. `--pulse` measures its radial streak
-> at c tau / 2 to **8×10⁻⁵ of a range bin**, running outward from the target.
-> `--sweep` counts every bearing bin's paints and finds each painted **exactly
-> once a rotation** at whole, fractional and jittered frame rates. `--r4` fits
-> the returns of equal targets to R⁻⁴ (**−3.9998**) and flat with STC at n = 4.
-> `--persist` holds the phosphor to its two-term decay to **2×10⁻⁷**. `ratest
-> --negative` re-runs eleven checks against deliberately wrong models, and
-> `tools/mutate.sh` changes one character of the shipped shaders and sweep; every
-> one is caught. A control sweep fails if any parameter does nothing.
+> (Anthropic), directed and reviewed by a human author. It's **never been loaded into
+> Resolume on macOS**, where the only host it's met is [oxbow](https://github.com/stoatworks-labs/oxbow),
+> a real FFGL host that isn't Resolume. On Windows both plugins pass the fleet's Arena gate in
+> Resolume Arena 7.27.1 on software rendering. Everything else is measured by an offline
+> harness that drives the real plugin classes in a headless GL context, on this Mac's GPU at
+> two rasters and again on Apple's software renderer, and every check is also run against a
+> wrong model to make sure it can fail. The numbers, and what I haven't tried yet, are under
+> [Status](#status).
 
-A plan-position radar scope for Resolume Arena/Avenue, as two FFGL plugins:
-**SW Radar**, a source that is a radar watching a synthetic sea, and **SW Radar
-Over**, an effect that makes your clip the sea.
+A plan-position radar scope for Resolume Arena and Avenue, the round, glowing kind every
+war film cuts to when things get tense. It comes as two FFGL plugins: **SW Radar**, a
+source that's a radar watching a synthetic sea, and **SW Radar Over**, an effect that
+makes your clip the sea.
 
 ![A PPI scope: a bay open to the north, coasts bright where they face the radar, shadowed behind, clutter at the centre, contacts as short arcs, the sweep just past east](docs/hero.png)
 
 <sub>The source's defaults after ten seconds: a bay open to the north on a 24 km
 scope, the sweep just past east with the trail fading behind it. Rendered by the
-plugin's offline harness (`ratest`), not captured from Resolume.</sub>
+plugin's offline harness (`ratest`) rather than captured from Resolume.</sub>
 
 <!-- downloads:start -->
 
@@ -67,23 +59,23 @@ macOS builds are signed and notarised and open normally. The Windows builds are 
 
 ## The one idea
 
-**A radar scope does not show the sea. It shows the sea convolved with the
-radar.** A plan-position indicator is a CRT whose trace runs out from the
-centre along the antenna's bearing while the antenna turns, and every echo
-brightens a long-persistence phosphor at its range and bearing. So nothing here
-is drawn as a picture of a radar: a reflectivity field goes through a radar
-model, and the look falls out of it.
+**A radar scope shows the sea convolved with the radar.** A plan-position
+indicator is a CRT whose trace runs out from the centre along the antenna's
+bearing while the antenna turns, and every echo brightens a long-persistence
+phosphor at its range and bearing. So none of this is a drawing of a radar. A
+reflectivity field goes through a radar model, and the look falls out of it.
 
 - **The beam smears in bearing.** A point target paints an arc as wide as the
-  beam, so a distant ship is a wide arc and a near one a short one.
+  beam (the harness measures its half-power width against Beamwidth to 0.004
+  degrees), so a distant ship is a wide arc and a near one a short one.
 - **The pulse smears in range**: every echo is a radial streak c tau / 2 long,
   outward from its target.
 - **The sweep leaves a trail.** The phosphor (P7: a blue-white flash, then a
   yellow-green afterglow) is brightest where the antenna has just been and
-  dimmest where it is about to come back.
+  dimmest where it's about to come back.
 - **The radar equation** makes near returns huge (R⁻⁴), and **STC** turns the
   gain up with range until the scope is flat. **Clutter** crowds the centre,
-  **rain** drifts as speckled cells, **noise** is speckle everywhere.
+  **rain** drifts as speckled cells, and **noise** is speckle everywhere.
 - **Coasts are bright edges**: land facing the radar returns hard and the land
   behind it falls into shadow.
 - **Moving contacts leave the plot of their track** in their fading paints.
@@ -120,38 +112,39 @@ covering the frame. Rendered by `ratest`.</sub>
 
 ## Status
 
-**v0.1.0, released 25 September 2026, and honestly early.** There is a
+**v0.1.0, released 25 September 2026, and still early days.** There's a
 [user guide](https://stoatworks-labs.com/software/radar/guide/)
 ([PDF](docs/USER-GUIDE.pdf)) and a [project page](https://stoatworks-labs.com/software/radar/).
 
-It has **never been loaded into Resolume on macOS**. `oxbow probe` reads the
+It's **never been loaded into Resolume on macOS**. `oxbow probe` reads the
 bundles as a host does (`SW Radar` / `RA01` / source, `SW Radar Over` / `RA02` /
-effect) and `oxbow selftest` renders 120 frames through each. No OpenFX port;
-there is a [browser demo](https://radar-demo.stoatworks-labs.com/) (below). Built
-and measured on macOS (Apple Silicon, M4 Max).
+effect) and `oxbow selftest` renders 120 frames through each. There's no OpenFX
+port, but there is a [browser demo](https://radar-demo.stoatworks-labs.com/)
+(below). I built and measured it on macOS (Apple Silicon, M4 Max).
 
 ### In Resolume Arena, on Windows
 
-On Windows both plugins have been loaded: a build of this source (the DLLs release.yml built
+On Windows both plugins have been loaded. A build of this source (the DLLs release.yml built
 from the registered tree) loads, registers and renders in Resolume Arena 7.27.1 on software
 rendering (win-lab, Mesa llvmpipe, no GPU, no sound device), with every control matching what
-the plugins declare (29 and 27 host controls), Arena's log clean, in the fleet's Arena gate:
-15 of 15 checks, the audio rows skipped. Because the sweep turns, no two grabs of the picture
-are alike, so the gate's noise floor is high and it could confirm only some controls one at a
-time: 10 of the source's 21 valued controls and 9 of the effect's 20, the rest inconclusive (none
-dead). The harness's own sweep (every one of the 43 parameters moves the picture) carries the
-rest. Software rendering says nothing about a GPU or about speed.
+the plugins declare (29 and 27 host controls) and Arena's log clean, in the fleet's Arena gate:
+15 of 15 checks, with the audio rows skipped. The sweep turns, so no two grabs of the picture
+are alike, which puts the gate's noise floor high, and it could only confirm some controls one
+at a time: 10 of the source's 21 valued controls and 9 of the effect's 20, with the rest
+inconclusive (none dead). The harness's own sweep (every one of the 43 parameters moves the
+picture) covers the rest. Software rendering says nothing about a GPU or about speed.
 
 ### What filming the release video found
 
 The video is rendered through `ratest --pipe` (the source) and `ratest --over --pipe`
-(Resolume's demo clips). Filming found no defect, and three facts now in the guide: at the
+(Resolume's demo clips). Filming didn't turn up any defects, but it did find three things that
+are now in the guide: at the
 defaults the rain hides behind the land and under the gain (Land 0 and +10 dB show the cells);
 a Range change under a long afterglow leaves the old map's ghost under the new one for
 seconds; and a regular beat every half second at 24 rpm is a fifth of a turn, so Audio
 Strobe's spokes stand still at five bearings.
 
-What is measured, on this machine, at 1280x720 and 320x180 on the GPU and at
+What's measured, on this Mac, at 1280x720 and 320x180 on the GPU and at
 320x180 on Apple's software renderer:
 
 | | |
@@ -172,22 +165,22 @@ What is measured, on this machine, at 1280x720 and 320x180 on the GPU and at
 
 Render cost (`ratest --bench`, the defaults, the median frame, on a machine
 shared with other builds): **SW Radar 0.34 ms at 720p, 0.39 at 1080p, 0.74 at
-4K; SW Radar Over 0.28, 0.43 and 1.17 ms** — 2–7% of a 60 fps frame. The
+4K; SW Radar Over 0.28, 0.43 and 1.17 ms**, which is 2–7% of a 60 fps frame. The
 GPU paints only the wedge the antenna swept; the decay is timed per bearing on
 the CPU.
 
-What is **not** verified, and is the honest limit of this release:
+What **isn't** verified yet:
 
 - **Never in Resolume on macOS**, and on Windows only on software rendering with
   no sound device: its FFT bins and real audio are untested in a host.
 - **A real P7's afterglow is a power law.** Jankowiak's compilation of the EIA/JEDEC
   phosphor tables (checked for this release) lists P7's long component as an inverse
-  power law; here it is an exponential with the time constant you set.
+  power law; here it's an exponential with the time constant you set.
 - **The phosphor is stretched to video rates.** Real P7 flashes for microseconds;
   here the flash lasts a few frames so the sweep's leading edge shows, and the
   colours are chosen by eye, not computed from spectra.
 - **Distributed returns are normalised.** A wider beam or a longer pulse blurs a
-  coast; it does not brighten it, as it physically would. Point targets follow
+  coast but doesn't brighten it, as it physically would. Point targets follow
   the radar equation exactly.
 - **Beamwidth is the two-way width** (what a target paints); a datasheet's
   one-way beamwidth is √2 wider for the same antenna.
@@ -201,16 +194,16 @@ No OpenFX port yet.
 
 ## Browser demo
 
-**<https://radar-demo.stoatworks-labs.com/>** — both plugins, their own
+**<https://radar-demo.stoatworks-labs.com/>**: both plugins, with their own
 controls and defaults. The five render passes are the plugin's own GLSL,
 spliced unedited into `demo/shaders.js` (`demo/tools/check_shaders.py`, run by
-`tools/verify.sh`, fails on a changed character). The CPU half — the antenna
+`tools/verify.sh`, fails on a changed character). The CPU half (the antenna
 and its crossed-bin rule, the per-column crossing timing, the clock, the
-contacts and the rain's drift, every conversion — is a JavaScript port in
-`demo/plugin.js` that **nothing checks but a reader**. There is no audio in a
-browser, so Audio, Audio Strobe and Audio Contacts are absent; Contacts and
+contacts and the rain's drift, and every conversion) is a JavaScript port in
+`demo/plugin.js` that **nothing checks but a reader**. There's no audio in a
+browser, so Audio, Audio Strobe and Audio Contacts are missing, and Contacts and
 Seed are dropdowns (Seed 0–99). The Over runs on the page's generated clips.
-It is a demo, not the plugin, and the page says what it does not reproduce.
+It's a demo rather than the plugin, and the page says what it doesn't reproduce.
 
 ## Build
 
@@ -264,5 +257,5 @@ MIT.
 
 The physics is the textbook radar: the range equation, sensitivity time
 control, range resolution c tau / 2, the Gaussian and uniform-aperture antenna
-patterns, and the P7 phosphor's two-component persistence. Nothing is copied
+patterns, and the P7 phosphor's two-component persistence. None of it's copied
 from anyone's source.
