@@ -4,7 +4,8 @@
 > (Anthropic), directed and reviewed by a human author. It's **never been loaded into
 > Resolume on macOS**, where the only host it's met is [oxbow](https://github.com/stoatworks-labs/oxbow),
 > a real FFGL host that isn't Resolume. On Windows both plugins pass the fleet's Arena gate in
-> Resolume Arena 7.27.1 on software rendering. Everything else is measured by an offline
+> Resolume Arena 7.27.1 on software rendering, as released at v0.1.0; the sprites added since
+> haven't been in any Resolume yet. Everything else is measured by an offline
 > harness that drives the real plugin classes in a headless GL context, on this Mac's GPU at
 > two rasters and again on Apple's software renderer, and every check is also run against a
 > wrong model to make sure it can fail. The numbers, and what I haven't tried yet, are under
@@ -109,12 +110,33 @@ covering the frame. Rendered by `ratest`.</sub>
   blue-white flash's strength), Phosphor (*P7*, *P19*, *Green*), Rings, Bearing
   Marks, Heading Line, Scope Size (from inscribed in the frame to covering it);
   the Over also has Mix.
+- **Sprites** (both plugins; new since v0.1.0, not released yet, from
+  [radar#5](https://github.com/stoatworks-labs/radar/issues/5)): your own picture
+  as contacts that come in from the rim to the centre, painted by the beam and
+  fading on the phosphor like any other echo. Sprite File (a PNG or JPG; empty
+  is a built-in blip), Sprite Threshold (the alpha, or with no transparency the
+  brightest channel, over which the picture is the target), Sprite Count (0–32,
+  0 is off and the default), Sprite Size (0.02–0.5 of the scope's radius), Sprite
+  Speed (0 holds still, then 0.004–0.5 radii a second), Speed Spread (all at one
+  speed to each at its own, 1/3x–3x), Stability (steady to surging and weaving),
+  Orientation (*Upright*/*Face Centre*), Hue and Saturation (the phosphor's
+  colours turned and scaled for the sprites), Grow On Approach (up to 4x at the
+  centre). The user guide says how to make a sprite that reads.
+
+![Ten alien sprites closing on the centre of SW Radar, each leaving fading copies of itself along its track](docs/sprites.png)
+
+<sub>SW Radar with ten sprites of the repository's test alien (`tools/fixtures/alien.png`),
+rendered by `ratest`. Never yet seen in Resolume.</sub>
 
 ## Status
 
 **v0.1.0, released 25 September 2026, and still early days.** There's a
 [user guide](https://stoatworks-labs.com/software/radar/guide/)
 ([PDF](docs/USER-GUIDE.pdf)) and a [project page](https://stoatworks-labs.com/software/radar/).
+
+**The sprites (radar#5) are on main and not in a release.** Everything below
+about them is the offline harness and the browser demo: they have never been
+loaded into Resolume, on macOS or on Windows.
 
 It's **never been loaded into Resolume on macOS**. `oxbow probe` reads the
 bundles as a host does (`SW Radar` / `RA01` / source, `SW Radar Over` / `RA02` /
@@ -124,7 +146,7 @@ port, but there is a [browser demo](https://radar-demo.stoatworks-labs.com/)
 
 ### In Resolume Arena, on Windows
 
-On Windows both plugins have been loaded. A build of this source (the DLLs release.yml built
+On Windows both plugins have been loaded, at v0.1.0, before the sprites. A build of this source (the DLLs release.yml built
 from the registered tree) loads, registers and renders in Resolume Arena 7.27.1 on software
 rendering (win-lab, Mesa llvmpipe, no GPU, no sound device), with every control matching what
 the plugins declare (29 and 27 host controls) and Arena's log clean, in the fleet's Arena gate:
@@ -159,20 +181,31 @@ What's measured, on this Mac, at 1280x720 and 320x180 on the GPU and at
 | resize | the phosphor survives a resize mid-run bit-identical, both plugins, both ways |
 | audio | the first frame after a clip trigger, loud, fires nothing; the next beat does |
 | GL state | viewport, vertex array, array buffer, program, unit, framebuffer, blend, scissor, clear colour, ten texture units, both plugins |
-| negative controls | **11** deliberately wrong models, **all 11** detected |
-| mutants | **4** one-character changes (three GLSL, one C++), **all 4** caught |
-| dead controls | **43** parameters over both plugins, all live |
+| sprite file | a PNG's alpha is the mask texel for texel; a 300x200 one is box-filtered to 128x85 keeping its coverage to 10⁻⁵; a JPG is read by its brightest channel; a missing file, a text file named .png and a truncated PNG each give the built-in blip with the reason logged, and a bad file draws bit-for-bit what no file does; a path with accents, katakana and an emoji loads; the UTF-8 to UTF-16 widening Windows needs is exact on three paths and refuses six malformed ones |
+| sprite threshold | the built-in blip is a disc Size x (1 − Threshold) across to 0.16–0.32 range bins at Threshold 0.2, 0.5, 0.8 |
+| sprites | Sprite Count 1, 5 and 12 are 1, 5 and 12 blobs on the phosphor and on the screen; a square of Size 0.2 is 68.3–68.7 px against 68.4 (720p) and 204.5–205.0 bins against 204.8; a half-filled sprite's light sits a quarter of its size (93–107%) above its centre within 1.4 degrees of screen up (Upright) and of outward (Face Centre); Grow On Approach to 0.1 bins of Size x (1 + 3 (1 − R)) |
+| sprite speed | read off the phosphor at every paint, at 60 and 24 fps, a sprite closes at 0.15000–0.15003 radii/s against 0.15, within 0.14 range bins of the law, reaches the centre within a frame of when it should and starts again at the rim; on the CPU, the law holds to 10⁻¹⁴ at 60, 24, 59.94 fps and jittered frames, and a wandering sprite is in the same place to 10⁻¹⁵ at 24, 60 and 240 fps |
+| sprite beam | a sprite is 0 on the phosphor until the sweep first reaches it, then its share decays by the two-term law to 2×10⁻⁷ and its flash returns when the sweep does |
+| sprite repeat | two instances, twelve wandering, growing, tinted alien sprites over clutter and noise: the same frame to the bit |
+| sprite colour | Hue 1/3 is the untinted light turned 120 degrees, Saturation 0.75 its chroma x1.5, Saturation 0 grey, each to 10⁻⁶ |
+| negative controls | **20** deliberately wrong models, **all 20** detected |
+| mutants | **6** one-character changes (four GLSL, two C++), **all 6** caught |
+| dead controls | **65** parameters over both plugins, all live |
 
 Render cost (`ratest --bench`, the defaults, the median frame, on a machine
 shared with other builds): **SW Radar 0.34 ms at 720p, 0.39 at 1080p, 0.74 at
 4K; SW Radar Over 0.28, 0.43 and 1.17 ms**, which is 2–7% of a 60 fps frame. The
 GPU paints only the wedge the antenna swept; the decay is timed per bearing on
-the CPU.
+the CPU. Sixteen sprites add nothing measurable to those numbers on this GPU; on
+Apple's software renderer twelve big ones cost about an eighth of a second a frame at 320x180.
 
 What **isn't** verified yet:
 
 - **Never in Resolume on macOS**, and on Windows only on software rendering with
   no sound device: its FFT bins and real audio are untested in a host.
+- **The sprites have never been in any Resolume.** The file dialog, a Windows path
+  with accents or emoji in it (the widening is checked, the file open is not), and
+  how the eleven new controls present in Arena are untested in a host.
 - **A real P7's afterglow is a power law.** Jankowiak's compilation of the EIA/JEDEC
   phosphor tables (checked for this release) lists P7's long component as an inverse
   power law; here it's an exponential with the time constant you set.
@@ -199,10 +232,13 @@ controls and defaults. The five render passes are the plugin's own GLSL,
 spliced unedited into `demo/shaders.js` (`demo/tools/check_shaders.py`, run by
 `tools/verify.sh`, fails on a changed character). The CPU half (the antenna
 and its crossed-bin rule, the per-column crossing timing, the clock, the
-contacts and the rain's drift, and every conversion) is a JavaScript port in
-`demo/plugin.js` that **nothing checks but a reader**. There's no audio in a
-browser, so Audio, Audio Strobe and Audio Contacts are missing, and Contacts and
-Seed are dropdowns (Seed 0–99). The Over runs on the page's generated clips.
+contacts and the rain's drift, the sprites' motion and mask, and every
+conversion) is a JavaScript port in `demo/plugin.js` that **nothing checks but a
+reader**. There's no audio in a browser, so Audio, Audio Strobe and Audio
+Contacts are missing, and Contacts, Seed and Sprite Count are dropdowns (Seed
+0–99). Sprite File is a choice of the blip and the two test sprites, plus a
+button to use a picture of your own, which never leaves the page. The Over runs
+on the page's generated clips.
 It's a demo rather than the plugin, and the page says what it doesn't reproduce.
 
 ## Build
@@ -231,6 +267,14 @@ The offline harness renders the real plugin classes headlessly:
     ./build/ratest --resize       the phosphor survives a resize
     ./build/ratest --clock        Resolume's 499 million ms clock, in double
     ./build/ratest --state        the GL state handed back
+    ./build/ratest --sprite-file  a PNG's alpha or a JPG's brightest channel; the blip for a bad file
+    ./build/ratest --sprite-threshold   the blip is Size x (1 - Threshold) across
+    ./build/ratest --sprites      count, size, orientation and growth off the painted picture
+    ./build/ratest --sprite-speed a sprite closes at Sprite Speed, read off the phosphor
+    ./build/ratest --sprite-beam  dark until the sweep, then the phosphor's decay
+    ./build/ratest --sprite-repeat      the same settings and clock, the same frame
+    ./build/ratest --sprite-colour      Hue turns the phosphor's colours, Saturation scales them
+    ./build/ratest --sprite-utf16 --sprite-motion   (no GL) the Windows path, the motion law
     ./build/ratest --sweep-law --cues --names   (no GL)
     ./build/ratest --negative     every check above, against a wrong model
     ./build/ratest --offline      the no-GL subset and its negative controls (what CI runs)

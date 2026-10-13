@@ -217,6 +217,14 @@ void main()
 // MEAN of the surface over the pulse's footprint in range, [r - L, r]: the
 // echo at delay r comes from everything between r - L and r, so the surface
 // is smeared outward by the pulse, and a uniform surface stays uniform.
+//
+// Two channels: R the surface (the map, or the clip), G the sprites (radar#5).
+// A sprite is an extended target like the coast: its mask, over Sprite
+// Threshold, is reflectivity 1 where the sprite is, resampled here in range
+// and bearing and averaged over the same pulse footprint, then convolved with
+// the beam in the paint. So the radar smears it exactly as it smears land,
+// and the sweep paints it. Sprites cast no shadow and are not shadowed: they
+// are contacts, like the source's ships, not land.
 //===========================================================================
 const char* const kReflectFragment = R"(
 uniform sampler2D MapTexture;
@@ -231,6 +239,14 @@ uniform vec2 MaxUV;
 uniform float Threshold;
 uniform float ShadowScale;///< the source's land shadow: 1 / its length, per scope unit
 uniform float MirrorForTest;///< 1; -1 only in --over's negative control
+uniform int SurfaceOn;      ///< 0: the map or the clip returns nothing (Land 0, Threshold 1)
+
+uniform sampler2D SpriteMask;///< the sprite's mask, rows bottom first, 0..1
+uniform int SpriteCount;     ///< the sprites that can touch this band (culled on the CPU)
+uniform vec4 SpriteBox[ 32 ];///< centre x, y (scope units), half-width, half-height
+uniform vec4 SpriteTurn[ 32 ];///< .xy the sprite's up, ( sin psi, cos psi ): ( 0, 1 ) upright
+uniform vec4 SpriteReach[ 32 ];///< its centre's range, its bounding radius, its bearing, the half-angle it subtends
+uniform float SpriteThreshold;
 out vec4 FragColor;
 
 //The source's radar shadow: what the beam has already passed through land to
@@ -266,20 +282,86 @@ float surfaceAt( float r, float theta )
 	return clamp( ( value - Threshold ) / max( 1.0 - Threshold, 1e-3 ), 0.0, 1.0 );
 }
 
-void main()
+//Whether sprite i's mask is over Sprite Threshold at u (scope units).
+bool spriteAt( int i, vec2 u )
 {
-	ivec2 t     = ivec2( gl_FragCoord.xy );
-	float theta = ( float( t.x ) + 0.5 ) * TAU / float( Bearings );
-	float r     = ( float( t.y ) + 0.5 ) / float( Ranges );
-	int taps    = clamp( int( ceil( PulseExtent * float( Ranges ) ) ) + 1, 1, 24 );
-	float sum   = 0.0;
+	vec4 box = SpriteBox[ i ];
+	vec2 up  = SpriteTurn[ i ].xy;
+	vec2 d   = u - box.xy;
+	//Into the sprite's own frame: right is ( cos psi, -sin psi ), up ( sin psi, cos psi ).
+	vec2 st = vec2( d.x * up.y - d.y * up.x, dot( d, up ) ) / ( 2.0 * box.zw ) + 0.5;
+	if( st.x < 0.0 || st.y < 0.0 || st.x > 1.0 || st.y > 1.0 )
+		return false;
+	return texture( SpriteMask, st ).r > SpriteThreshold;
+}
+
+//Whether sprite i's bounding circle is within reach of the footprint
+//[r - L, r] at bearing theta: one test, before any tap is taken.
+bool spriteReaches( int i, float r, float theta )
+{
+	vec4 reach = SpriteReach[ i ];
+	if( r < reach.x - reach.y || r - PulseExtent > reach.x + reach.y )
+		return false;
+	float off = theta - reach.z;
+	off -= TAU * floor( off / TAU + 0.5 );
+	return abs( off ) <= reach.w;
+}
+
+//The sprites' mean over the pulse's footprint [r - L, r] at bearing theta.
+//Overlapping sprites are one target, not two: the union at each tap, not
+//the sum. Most texels of the band are in reach of no sprite and cost a test
+//per sprite; the taps are taken only where one can be hit.
+float spritesOver( float r, float theta, int taps )
+{
+	int first = -1;
+	bool more = false;
+	for( int i = 0; i < SpriteCount; ++i )
+		if( spriteReaches( i, r, theta ) )
+		{
+			if( first < 0 )
+				first = i;
+			else
+				more = true;
+		}
+	if( first < 0 )
+		return 0.0;
+	vec2 dir  = vec2( sine( theta ), cosine( theta ) );
+	float sum = 0.0;
 	for( int j = 0; j < taps; ++j )
 	{
 		float rj = r - PulseExtent * ( float( j ) + 0.5 ) / float( taps );
-		if( rj > 0.0 )
-			sum += surfaceAt( rj, theta );
+		if( rj <= 0.0 )
+			continue;
+		vec2 u   = rj * dir;
+		bool hit = spriteAt( first, u );
+		if( more )
+			for( int i = first + 1; i < SpriteCount && !hit; ++i )
+				hit = spriteReaches( i, r, theta ) && spriteAt( i, u );
+		if( hit )
+			sum += 1.0;
 	}
-	FragColor = vec4( sum / float( taps ) * visibility( r, theta ), 0.0, 0.0, 1.0 );
+	return sum / float( taps );
+}
+
+void main()
+{
+	ivec2 t       = ivec2( gl_FragCoord.xy );
+	float theta   = ( float( t.x ) + 0.5 ) * TAU / float( Bearings );
+	float r       = ( float( t.y ) + 0.5 ) / float( Ranges );
+	int taps      = clamp( int( ceil( PulseExtent * float( Ranges ) ) ) + 1, 1, 24 );
+	float surface = 0.0;
+	if( SurfaceOn == 1 )
+	{
+		float sum = 0.0;
+		for( int j = 0; j < taps; ++j )
+		{
+			float rj = r - PulseExtent * ( float( j ) + 0.5 ) / float( taps );
+			if( rj > 0.0 )
+				sum += surfaceAt( rj, theta );
+		}
+		surface = sum / float( taps ) * visibility( r, theta );
+	}
+	FragColor = vec4( surface, SpriteCount > 0 ? spritesOver( r, theta, taps ) : 0.0, 0.0, 1.0 );
 }
 )";
 
@@ -296,9 +378,15 @@ void main()
 // So a paint is S' = S x Carry + echo x (Flash, 1), and the time between the
 // crossing and the end of the frame is the composite's fade, not an age here.
 //
+// The texel is FOUR components: (flash, afterglow) of everything, then
+// (flash, afterglow) of the sprites' share of it, decayed alike, so the
+// composite can give the sprites their own colour (Sprite Hue, Saturation).
+// The sprites' share of the video is the share of P they put in: the video
+// is one tube's response, 1 - exp( -P ), and is split, never added twice.
+//
 // The echo, for the texel at antenna bearing phi and delay range r:
 //
-//   P = G [ r^(n-4) (surface (x) beam + clutter + rain) + R_t^(n-4) points + r^n noise ] + strobe
+//   P = G [ r^(n-4) ((surface + sprites) (x) beam + clutter + rain) + R_t^(n-4) points + r^n noise ] + strobe
 //
 // n is the STC exponent, the 4 is the radar equation (RangeExponent, which
 // only --r4's negative control ever changes). The point targets are painted
@@ -311,7 +399,7 @@ uniform sampler2D Reflect;
 uniform sampler2D Carry;
 uniform sampler2D Kernel;
 uniform int KernelHalf;
-uniform int SurfaceOn;
+uniform int SurfaceOn;///< the reflect band was written this frame (surface or sprites)
 uniform int Bearings;
 uniform int Ranges;
 
@@ -339,6 +427,7 @@ uniform float RangeKm;
 uniform vec2 RainOffset;
 uniform uint Seed;
 uniform float StrobeLevel;
+uniform float SpriteLevel;///< a sprite's reflectivity, against the coast's 0.25..1
 
 out vec4 FragColor;
 
@@ -350,7 +439,8 @@ float rainAt( vec2 km )
 	return smoothstep( 0.60, 0.85, n );
 }
 
-float echo( ivec2 t, int offset )
+//( the video, the sprites' share of it )
+vec2 echo( ivec2 t, int offset )
 {
 	float phi  = ( float( t.x ) + 0.5 ) * TAU / float( Bearings );
 	float r    = ( float( t.y ) + 0.5 ) / float( Ranges );
@@ -359,18 +449,20 @@ float echo( ivec2 t, int offset )
 	float rMin = 0.5 / float( Ranges );
 	float rr   = max( r, rMin );
 
-	//The surface, convolved in bearing with the beam, normalised: a wider beam
-	//blurs the coast, it does not brighten it.
-	float acc = 0.0, wsum = 0.0;
+	//The surface and the sprites, convolved in bearing with the beam,
+	//normalised: a wider beam blurs the coast, it does not brighten it.
+	vec2 acc   = vec2( 0.0 );
+	float wsum = 0.0;
 	if( SurfaceOn == 1 )
 		for( int m = -Window; m <= Window; m += Stride )
 		{
 			int col = ( t.x + m + 4 * Bearings ) % Bearings;
 			float w = texelFetch( Kernel, ivec2( m + KernelHalf, 0 ), 0 ).r;
-			acc += w * texelFetch( Reflect, ivec2( col, t.y ), 0 ).r;
+			acc += w * texelFetch( Reflect, ivec2( col, t.y ), 0 ).rg;
 			wsum += w;
 		}
-	float surface = wsum > 0.0 ? acc / wsum : 0.0;
+	float surface = wsum > 0.0 ? acc.x / wsum : 0.0;
+	float sprite  = wsum > 0.0 ? acc.y / wsum * SpriteLevel : 0.0;
 
 	//Point targets, analytic in both directions.
 	float points = 0.0;
@@ -397,31 +489,42 @@ float echo( ivec2 t, int offset )
 		rain = RainLevel * rr * rr * rainAt( km * vec2( sine( phi ), cosine( phi ) ) ) * speckle( cell + 0x9e3779b9u );
 	float noise = NoiseLevel > 0.0 ? NoiseLevel * speckle( cell + 0x3c6ef372u ) * pow( rr, Stc ) : 0.0;
 
-	float p = GainLinear * ( pow( rr, Stc - RangeExponent ) * ( surface + clutter + rain ) + points + noise );
+	float law  = pow( rr, Stc - RangeExponent );
+	float p    = GainLinear * ( law * ( surface + sprite + clutter + rain ) + points + noise );
 	if( StrobeLevel > 0.0 )
 		p += StrobeLevel * ( 0.4 + 0.6 * speckle( cell + 0xdaa66d2bu ) );
 	//1 - exp( -p ), without the float cancellation: exp( -1e-5 ) is 0.99999 to
 	//one float ulp (6e-8), which leaves a faint echo 0.6% of quantisation
 	//noise. The series is exact to 4e-10 relative below 0.01.
-	return p < 0.01 ? p * ( 1.0 - p * ( 0.5 - p * ( 1.0 / 6.0 ) ) ) : 1.0 - exp( -p );
+	float video = p < 0.01 ? p * ( 1.0 - p * ( 0.5 - p * ( 1.0 / 6.0 ) ) ) : 1.0 - exp( -p );
+	float mine  = GainLinear * law * sprite;
+	return vec2( video, p > 0.0 && mine > 0.0 ? video * min( mine / p, 1.0 ) : 0.0 );
 }
 
 void main()
 {
 	ivec2 t    = ivec2( gl_FragCoord.xy );
 	int offset = ( t.x - FirstCol + Bearings ) % Bearings;
-	vec2 s     = texelFetch( Previous, t, 0 ).rg * texelFetch( Carry, ivec2( t.x, 0 ), 0 ).rg;
+	vec4 s     = texelFetch( Previous, t, 0 ) * texelFetch( Carry, ivec2( t.x, 0 ), 0 ).rgrg;
 	if( CountForTest == 1 )
-		s += vec2( 1.0 );
+		s.xy += vec2( 1.0 );
 	else
-		s += echo( t, offset ) * Weights;
+	{
+		vec2 e = echo( t, offset );
+		s.xy += e.x * Weights;
+		s.zw += e.y * Weights;
+	}
 	//One NaN would survive every paint for the life of the instance
 	//(vectrix's trap), so none gets in.
 	if( isnan( s.x ) || isinf( s.x ) )
 		s.x = 0.0;
 	if( isnan( s.y ) || isinf( s.y ) )
 		s.y = 0.0;
-	FragColor = vec4( s, 0.0, 1.0 );
+	if( isnan( s.z ) || isinf( s.z ) )
+		s.z = 0.0;
+	if( isnan( s.w ) || isinf( s.w ) )
+		s.w = 0.0;
+	FragColor = s;
 }
 )";
 
@@ -431,7 +534,8 @@ void main()
 // nearest texels, each FADED by its own column's age -- by hand, because the
 // fade jumps between two columns painted a rotation apart and a hardware
 // bilinear of the unfaded values would smear last rotation's paint into
-// this one's. The two components glow in their own colours; the rings, the
+// this one's. The two components glow in their own colours (the sprites'
+// share in the phosphor's colours turned by Sprite Hue and Saturation); the rings, the
 // bearing marks and the heading line are drawn one pixel wide; the tube's
 // response 1 - exp( -light ) saturates the bright ones. The source is
 // transparent outside the scope; the Over effect mixes the scope with the clip.
@@ -459,14 +563,22 @@ uniform int IsEffect;
 uniform float MixAmount;
 uniform int PolarViewForTest;
 uniform ivec2 PolarOrigin;
+uniform int PolarSpritesForTest;///< the polar view shows the sprites' share, not the whole
+uniform int SpriteTint;         ///< 0: the sprites are in the phosphor's own colours
+uniform vec3 SpriteFlashColour;
+uniform vec3 SpriteAfterColour;
+uniform int SpriteNoFadeForTest;///< --sprite-beam's negative control: the share never fades
 out vec4 FragColor;
 
-//One texel, faded to now. `col` may be up to one rotation either side.
-vec2 glowAt( int col, int row )
+//One texel, faded to now: (flash, afterglow, the sprites' flash, their
+//afterglow). `col` may be up to one rotation either side.
+vec4 glowAt( int col, int row )
 {
-	int c = ( col + 2 * Bearings ) % Bearings;
-	int r = clamp( row, 0, Ranges - 1 );
-	return texelFetch( Phosphor, ivec2( c, r ), 0 ).rg * texelFetch( Fade, ivec2( c, 0 ), 0 ).rg;
+	int c     = ( col + 2 * Bearings ) % Bearings;
+	int r     = clamp( row, 0, Ranges - 1 );
+	vec2 f    = texelFetch( Fade, ivec2( c, 0 ), 0 ).rg;
+	vec4 fade = SpriteNoFadeForTest == 1 ? vec4( f, 1.0, 1.0 ) : f.xyxy;
+	return texelFetch( Phosphor, ivec2( c, r ), 0 ) * fade;
 }
 
 float lineMask( float distancePx )
@@ -481,7 +593,8 @@ void main()
 	{
 		//The harness's window onto the polar grid: output pixel = texel.
 		ivec2 q   = ivec2( p ) + PolarOrigin;
-		FragColor = vec4( glowAt( q.x, q.y ), 0.0, 1.0 );
+		vec4 g    = glowAt( q.x, q.y );
+		FragColor = vec4( PolarSpritesForTest == 1 ? g.zw : g.xy, 0.0, 1.0 );
 		return;
 	}
 	vec2 u      = ( p - Centre ) / RadiusPx;
@@ -495,8 +608,11 @@ void main()
 	float x0 = floor( x ), y0 = floor( y );
 	vec2 f   = vec2( x - x0, y - y0 );
 	int c0 = int( x0 ), r0 = int( y0 );
-	vec2 s = mix( mix( glowAt( c0, r0 ), glowAt( c0 + 1, r0 ), f.x ), mix( glowAt( c0, r0 + 1 ), glowAt( c0 + 1, r0 + 1 ), f.x ), f.y );
+	vec4 s = mix( mix( glowAt( c0, r0 ), glowAt( c0 + 1, r0 ), f.x ), mix( glowAt( c0, r0 + 1 ), glowAt( c0 + 1, r0 + 1 ), f.x ), f.y );
 	vec3 light = s.x * FlashColour + s.y * AfterColour;
+	//The sprites' share, moved from the phosphor's colours to theirs.
+	if( SpriteTint == 1 )
+		light += s.z * ( SpriteFlashColour - FlashColour ) + s.w * ( SpriteAfterColour - AfterColour );
 
 	//The graticule, in pixels.
 	float overlay = 0.0;

@@ -45,8 +45,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <set>
 #include <sstream>
@@ -224,6 +226,7 @@ const char* kindName( unsigned int type )
 	case FF_TYPE_STANDARD: return "standard";
 	case FF_TYPE_TEXT: return "text";
 	case FF_TYPE_INTEGER: return "integer";
+	case FF_TYPE_FILE: return "file";
 	default: return "other";
 	}
 }
@@ -540,6 +543,32 @@ struct Rig
 		return data;
 	}
 
+	/// The whole phosphor, all four components: (flash, afterglow) of
+	/// everything, then of the sprites' share.
+	Floats Phosphor4() const
+	{
+		Floats data( static_cast< size_t >( kBearings ) * kRanges * 4 );
+		glBindTexture( GL_TEXTURE_2D, plugin.PhosphorTextureID() );
+		glPixelStorei( GL_PACK_ALIGNMENT, 1 );
+		glGetTexImage( GL_TEXTURE_2D, 0, GL_RGBA, GL_FLOAT, data.data() );
+		glBindTexture( GL_TEXTURE_2D, 0 );
+		return data;
+	}
+
+	/// One rectangle of the phosphor, all four components, row by row.
+	Floats PhosphorRect4( int x, int y, int w, int h )
+	{
+		if( !readFBO )
+			glGenFramebuffers( 1, &readFBO );
+		glBindFramebuffer( GL_FRAMEBUFFER, readFBO );
+		glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, plugin.PhosphorTextureID(), 0 );
+		Floats data( static_cast< size_t >( w ) * h * 4 );
+		glPixelStorei( GL_PACK_ALIGNMENT, 1 );
+		glReadPixels( x, y, w, h, GL_RGBA, GL_FLOAT, data.data() );
+		glBindFramebuffer( GL_FRAMEBUFFER, 0 );
+		return data;
+	}
+
 	/// One rectangle of the phosphor, (flash, afterglow) pairs, row by row.
 	Floats PhosphorRect( int x, int y, int w, int h )
 	{
@@ -616,7 +645,11 @@ bool applySetting( RadarPlugin& plugin, const std::string& assignment, std::stri
 	for( const NamedParameter& parameter : listParameters( plugin ) )
 		if( parameter.name == name )
 		{
-			plugin.SetFloatParameter( parameter.index, std::strtof( value.c_str(), nullptr ) );
+			//A file parameter takes its path as text, as the host hands it.
+			if( parameter.type == FF_TYPE_FILE || parameter.type == FF_TYPE_TEXT )
+				plugin.SetTextParameter( parameter.index, value.c_str() );
+			else
+				plugin.SetFloatParameter( parameter.index, std::strtof( value.c_str(), nullptr ) );
 			return true;
 		}
 	error = "no parameter called '" + name + "'";
@@ -756,6 +789,9 @@ int runPipe( bool effect, int width, int height, double fps, const std::string& 
 	return 0;
 }
 
+std::string fixturePath( const std::string& name );
+void setSpriteFile( Rig& rig, const std::string& path );
+
 //===========================================================================
 // --bench
 //===========================================================================
@@ -767,13 +803,21 @@ int runBench()
 		const char* name;
 	};
 	const Size sizes[] = { { 1280, 720, "720p" }, { 1920, 1080, "1080p" }, { 3840, 2160, "4K" } };
-	std::printf( "\n=== bench: the defaults, after 120 frames of warm-up, each frame timed with glFinish both sides\n" );
+	std::printf( "\n=== bench: the defaults, after 120 frames of warm-up, each frame timed with glFinish both sides\n"
+	             "    (then with 16 sprites of tools/fixtures/alien.png, growing on approach, the sprites' own defaults otherwise)\n" );
+	for( int sprites : { 0, 16 } )
 	for( bool effect : { false, true } )
 		for( const Size& size : sizes )
 		{
 			Rig rig( effect );
 			if( !rig.Init( size.w, size.h ) )
 				return 1;
+			if( sprites > 0 )
+			{
+				rig.Set( PT_SPRITE_COUNT, static_cast< float >( sprites ) );
+				rig.Set( PT_SPRITE_GROW, 0.5f );
+				setSpriteFile( rig, fixturePath( "alien.png" ) );
+			}
 			if( !rig.Render( 120 ) )
 				return 1;
 			glFinish();
@@ -791,8 +835,8 @@ int runBench()
 			for( double t : times )
 				mean += t / kTimed;
 			std::sort( times.begin(), times.end() );
-			std::printf( "  %-14s %-6s median %5.2f ms/frame, mean %5.2f, worst %5.2f  (median %4.1f%% of a 60 fps frame)\n",
-			             effect ? "SW Radar Over" : "SW Radar", size.name, times[ kTimed / 2 ], mean, times.back(),
+			std::printf( "  %-14s %-11s %-6s median %5.2f ms/frame, mean %5.2f, worst %5.2f  (median %4.1f%% of a 60 fps frame)\n",
+			             effect ? "SW Radar Over" : "SW Radar", sprites > 0 ? "16 sprites" : "", size.name, times[ kTimed / 2 ], mean, times.back(),
 			             100.0 * times[ kTimed / 2 ] / ( 1000.0 / 60.0 ) );
 		}
 	return 0;
@@ -819,6 +863,16 @@ struct Perturb
 	bool clockFloat      = false;///< --clock: elapsed time from a float host clock
 	bool cuesRamp        = false;///< --cues: every control ramps between keys
 	bool lawLines        = false;///< --sweep-law: Sweep.h's LineAt instead of Crossed
+	// Sprites (radar#5).
+	bool spriteUtf16Bytes         = false;///< --sprite-utf16: every byte widened to a code unit
+	bool spriteMotionPerFrame     = false;///< --sprite-motion: distance added per frame, not per second
+	bool spriteKeepLast           = false;///< --sprite-file: a failed file leaves the last picture up
+	bool spriteThresholdIgnored   = false;///< --sprite-threshold: any alpha at all is the target
+	bool spriteOrientationIgnored = false;///< --sprites: Face Centre drawn upright
+	bool spriteSpeedPerFrame      = false;///< --sprite-speed: the plugin's motion tied to frames
+	bool spriteNoFade             = false;///< --sprite-beam: the sprites' share never fades
+	bool spriteWallSeed           = false;///< --sprite-repeat: the seed salted from the wall clock
+	bool spriteHueBackwards       = false;///< --sprite-colour: Hue turns the colours the other way
 };
 
 using CheckFn = int ( * )( const Perturb& );
@@ -1775,7 +1829,9 @@ int runCues( const Perturb& perturb )
 {
 	std::printf( "\n=== cues: a cue sheet steps options, booleans, events and integers, and ramps standard controls\n" );
 	std::istringstream sheet( "0 Phosphor 0\n60 Phosphor 2\n0 Heading Line 0\n30 Heading Line 1\n"
-	                          "0 Contacts 2\n60 Contacts 12\n0 Audio Strobe 0\n60 Audio Strobe 1\n" );
+	                          "0 Contacts 2\n60 Contacts 12\n0 Audio Strobe 0\n60 Audio Strobe 1\n"
+	                          "0 Sprite Count 2\n60 Sprite Count 12\n0 Orientation 0\n60 Orientation 1\n"
+	                          "0 Stability 0\n60 Stability 1\n" );
 	std::string error;
 	const auto tracks = loadScript( sheet, "cues", error );
 	RadarPlugin plugin( false );
@@ -1921,6 +1977,1295 @@ int runState( const Perturb& )
 	return Verdict();
 }
 
+//===========================================================================
+// Sprites (radar#5): an image file as contacts the beam paints.
+//===========================================================================
+std::string fixturePath( const std::string& name )
+{
+	const char* env = std::getenv( "RATEST_FIXTURES" );
+	return std::string( env != nullptr && *env != 0 ? env : RATEST_FIXTURES ) + "/" + name;
+}
+
+/// A scratch folder for this run's generated sprites, removed at exit.
+const std::string& scratchFolder()
+{
+	struct Folder
+	{
+		std::string path;
+		Folder()
+		{
+			const char* tmp     = std::getenv( "TMPDIR" );
+			std::string pattern = ( tmp != nullptr && *tmp != 0 ) ? tmp : "/tmp";
+			if( pattern.back() != '/' )
+				pattern += '/';
+			pattern += "ratest-sprites-XXXXXX";
+			std::vector< char > buffer( pattern.begin(), pattern.end() );
+			buffer.push_back( 0 );
+			const char* made = mkdtemp( buffer.data() );
+			path             = made ? made : "/tmp";
+		}
+		~Folder()
+		{
+			if( path != "/tmp" )
+			{
+				std::error_code ignored;
+				std::filesystem::remove_all( path, ignored );
+			}
+		}
+	};
+	static Folder folder;
+	return folder.path;
+}
+
+std::string readBytes( const std::string& path )
+{
+	std::ifstream file( path, std::ios::binary );
+	return std::string( std::istreambuf_iterator< char >( file ), std::istreambuf_iterator< char >() );
+}
+
+bool writeBytes( const std::string& path, const std::string& bytes )
+{
+	std::ofstream file( path, std::ios::binary );
+	file.write( bytes.data(), static_cast< std::streamsize >( bytes.size() ) );
+	return static_cast< bool >( file );
+}
+
+/// A sprite PNG: `alpha( x, y )`, x right and y UP in pixels, over white (or red).
+bool writeAlphaSprite( const std::string& path, int w, int h, const std::function< double( int, int ) >& alpha, bool red = false )
+{
+	Floats rgba( static_cast< size_t >( w ) * h * 4 );
+	for( int y = 0; y < h; ++y )
+		for( int x = 0; x < w; ++x )
+		{
+			float* o = &rgba[ ( static_cast< size_t >( y ) * w + x ) * 4 ];
+			o[ 0 ]   = 1.0f;
+			o[ 1 ]   = red ? 0.0f : 1.0f;
+			o[ 2 ]   = red ? 0.0f : 1.0f;
+			o[ 3 ]   = static_cast< float >( alpha( x, y ) );
+		}
+	return writePng( path, w, h, rgba );
+}
+
+/// Nothing but the sprites: no clutter, noise, land, traffic, graticule or
+/// clip (the Over's Threshold at 1); STC flat; a 0.5-degree beam and a
+/// 0.05 us pulse (7.5 m: a third of a range bin on 24 km), so a sprite's
+/// shape is barely smeared; the sprites held still and steady.
+void spriteScene( Rig& rig, double gainDb = -30.0 )
+{
+	quiet( rig );
+	rig.Set( PT_THRESHOLD, 1.0f );
+	rig.Set( PT_STC, 1.0f );
+	rig.Set( PT_GAIN, ParamFromGainDb( gainDb ) );
+	rig.Set( PT_SIDELOBES, 0.0f );
+	rig.Set( PT_BEAMWIDTH, ParamFromBeamwidth( 0.5 ) );
+	rig.Set( PT_PULSE, ParamFromPulse( 0.05 ) );
+	rig.Set( PT_SPRITE_SPEED, 0.0f );
+	rig.Set( PT_SPEED_SPREAD, 0.0f );
+	rig.Set( PT_STABILITY, 1.0f );
+	rig.Set( PT_SPRITE_GROW, 0.0f );
+	rig.Set( PT_SPRITE_THRESHOLD, 0.5f );
+}
+
+void setSpriteFile( Rig& rig, const std::string& path )
+{
+	rig.plugin.SetTextParameter( static_cast< unsigned int >( rig.plugin.HostIndexOf( PT_SPRITE_FILE ) ), path.c_str() );
+}
+
+/// The bearing bin whose centre is nearest `bearing`.
+int nearestColumn( double bearing )
+{
+	return sweep::Column( static_cast< int64_t >( std::lround( bearing / ( 2.0 * kPi / kBearings ) - 0.5 ) ), kBearings );
+}
+
+/// Luminance of the output, bilinear between pixel centres (--arc's reading).
+double screenLuminance( const Floats& out, int width, int height, double x, double y )
+{
+	x -= 0.5;
+	y -= 0.5;
+	const int x0 = static_cast< int >( std::floor( x ) ), y0 = static_cast< int >( std::floor( y ) );
+	const double fx = x - x0, fy = y - y0;
+	double sum = 0.0;
+	for( int dy = 0; dy < 2; ++dy )
+		for( int dx = 0; dx < 2; ++dx )
+		{
+			const int xx = std::clamp( x0 + dx, 0, width - 1 ), yy = std::clamp( y0 + dy, 0, height - 1 );
+			const float* p = &out[ ( static_cast< size_t >( yy ) * width + xx ) * 4 ];
+			sum += ( 0.2126 * p[ 0 ] + 0.7152 * p[ 1 ] + 0.0722 * p[ 2 ] ) * ( dx ? fx : 1.0 - fx ) * ( dy ? fy : 1.0 - fy );
+		}
+	return sum;
+}
+
+double pixelLuminance( const Floats& out, int width, int x, int y )
+{
+	const float* p = &out[ ( static_cast< size_t >( y ) * width + x ) * 4 ];
+	return 0.2126 * p[ 0 ] + 0.7152 * p[ 1 ] + 0.0722 * p[ 2 ];
+}
+
+/// Connected regions of the phosphor's channel `channel` above `fraction` of
+/// its maximum, 8-connected, wrapping in bearing.
+int countPolarBlobs( const Floats& ph4, int channel, double fraction )
+{
+	float peak = 0.0f;
+	for( size_t i = static_cast< size_t >( channel ); i < ph4.size(); i += 4 )
+		peak = std::max( peak, ph4[ i ] );
+	if( peak <= 0.0f )
+		return 0;
+	const float floor = static_cast< float >( fraction * peak );
+	std::vector< unsigned char > seen( static_cast< size_t >( kBearings ) * kRanges, 0 );
+	auto lit = [ & ]( int x, int y ) { return ph4[ ( static_cast< size_t >( y ) * kBearings + x ) * 4 + channel ] > floor; };
+	int blobs = 0;
+	std::vector< std::pair< int, int > > stack;
+	for( int y = 0; y < kRanges; ++y )
+		for( int x = 0; x < kBearings; ++x )
+		{
+			if( seen[ static_cast< size_t >( y ) * kBearings + x ] || !lit( x, y ) )
+				continue;
+			++blobs;
+			stack.push_back( { x, y } );
+			seen[ static_cast< size_t >( y ) * kBearings + x ] = 1;
+			while( !stack.empty() )
+			{
+				const auto [ cx, cy ] = stack.back();
+				stack.pop_back();
+				for( int dy = -1; dy <= 1; ++dy )
+					for( int dx = -1; dx <= 1; ++dx )
+					{
+						const int nx = ( cx + dx + kBearings ) % kBearings, ny = cy + dy;
+						if( ny < 0 || ny >= kRanges || seen[ static_cast< size_t >( ny ) * kBearings + nx ] || !lit( nx, ny ) )
+							continue;
+						seen[ static_cast< size_t >( ny ) * kBearings + nx ] = 1;
+						stack.push_back( { nx, ny } );
+					}
+			}
+		}
+	return blobs;
+}
+
+/// Connected regions of the output brighter than the scope's empty face by
+/// `fraction` of the brightest, 4-connected, inside the scope.
+int countScreenBlobs( const Rig& rig, const Floats& out, double fraction )
+{
+	const double cx = rig.plugin.ScopeCentreX(), cy = rig.plugin.ScopeCentreY(), radius = rig.plugin.ScopeRadius();
+	auto inside = [ & ]( int x, int y ) { return std::hypot( x + 0.5 - cx, y + 0.5 - cy ) < radius - 1.5; };
+	double face = 1e30, peak = -1e30;
+	for( int y = 0; y < rig.height; ++y )
+		for( int x = 0; x < rig.width; ++x )
+			if( inside( x, y ) )
+			{
+				face = std::min( face, pixelLuminance( out, rig.width, x, y ) );
+				peak = std::max( peak, pixelLuminance( out, rig.width, x, y ) );
+			}
+	const double floor = face + fraction * ( peak - face );
+	std::vector< unsigned char > seen( static_cast< size_t >( rig.width ) * rig.height, 0 );
+	auto lit = [ & ]( int x, int y ) { return inside( x, y ) && pixelLuminance( out, rig.width, x, y ) > floor; };
+	int blobs = 0;
+	std::vector< std::pair< int, int > > stack;
+	for( int y = 0; y < rig.height; ++y )
+		for( int x = 0; x < rig.width; ++x )
+		{
+			if( seen[ static_cast< size_t >( y ) * rig.width + x ] || !lit( x, y ) )
+				continue;
+			++blobs;
+			stack.push_back( { x, y } );
+			seen[ static_cast< size_t >( y ) * rig.width + x ] = 1;
+			while( !stack.empty() )
+			{
+				const auto [ px, py ] = stack.back();
+				stack.pop_back();
+				const int nx[] = { px + 1, px - 1, px, px }, ny[] = { py, py, py + 1, py - 1 };
+				for( int k = 0; k < 4; ++k )
+				{
+					if( nx[ k ] < 0 || ny[ k ] < 0 || nx[ k ] >= rig.width || ny[ k ] >= rig.height
+					    || seen[ static_cast< size_t >( ny[ k ] ) * rig.width + nx[ k ] ] || !lit( nx[ k ], ny[ k ] ) )
+						continue;
+					seen[ static_cast< size_t >( ny[ k ] ) * rig.width + nx[ k ] ] = 1;
+					stack.push_back( { nx[ k ], ny[ k ] } );
+				}
+			}
+		}
+	return blobs;
+}
+
+/// A sprite's extent in range, scope units, read off the phosphor's sprite
+/// afterglow along the bearing bin nearest its centre: the half-maximum width
+/// of the profile within `reach` of its centre (another sprite, say one over
+/// the centre of the scope, can cross the same bin).
+/// A sprite nothing else can reach into: no other sprite's square (at any
+/// turn) overlaps its own, and neither the centre nor the rim cuts it.
+bool isolated( const std::vector< RadarPlugin::SpriteDraw >& sprites, size_t i )
+{
+	const auto& s     = sprites[ i ];
+	const double half = std::sqrt( 2.0 ) * std::max( s.hx, s.hy );
+	if( s.range - half <= 0.0 || s.range + half >= 1.0 )
+		return false;
+	for( size_t j = 0; j < sprites.size(); ++j )
+		if( j != i && std::hypot( s.x - sprites[ j ].x, s.y - sprites[ j ].y )
+		                  <= half + std::sqrt( 2.0 ) * std::max( sprites[ j ].hx, sprites[ j ].hy ) )
+			return false;
+	return true;
+}
+
+double radialExtent( Rig& rig, const RadarPlugin::SpriteDraw& s, double reach )
+{
+	const Floats column = rig.PhosphorRect4( nearestColumn( s.bearing ), 0, 1, kRanges );
+	const int first     = std::max( 0, static_cast< int >( ( s.range - reach ) * kRanges ) );
+	const int last      = std::min( kRanges - 1, static_cast< int >( ( s.range + reach ) * kRanges ) );
+	std::vector< double > profile;
+	for( int k = first; k <= last; ++k )
+		profile.push_back( column[ static_cast< size_t >( k ) * 4 + 3 ] );
+	const Width w = halfMaxWidth( profile );
+	return w.valid ? ( w.right - w.left ) / kRanges : 0.0;
+}
+
+//===========================================================================
+// --sprite-utf16 (no GL): the Windows path, checked where it can be.
+//===========================================================================
+std::u16string utf16Of( const std::vector< char32_t >& points )
+{
+	std::u16string out;
+	for( char32_t c : points )
+		if( c >= 0x10000 )
+		{
+			out.push_back( static_cast< char16_t >( 0xD800 + ( ( c - 0x10000 ) >> 10 ) ) );
+			out.push_back( static_cast< char16_t >( 0xDC00 + ( ( c - 0x10000 ) & 0x3FF ) ) );
+		}
+		else
+			out.push_back( static_cast< char16_t >( c ) );
+	return out;
+}
+
+int runSpriteUtf16( const Perturb& perturb )
+{
+	std::printf( "\n=== sprite-utf16: a sprite path in UTF-8 widens to the UTF-16 that _wfopen takes on Windows; a malformed one is "
+	             "refused\n" );
+	auto convert = [ & ]( const std::string& in, std::u16string& out ) {
+		if( perturb.spriteUtf16Bytes )
+		{
+			out = sprite::WidenBytesForTest( in );
+			return true;
+		}
+		return sprite::Utf8ToUtf16( in, out );
+	};
+	auto ascii = []( const std::string& s ) { return std::vector< char32_t >( s.begin(), s.end() ); };
+	auto join  = []( std::vector< std::vector< char32_t > > parts ) {
+		std::vector< char32_t > all;
+		for( const auto& p : parts )
+			all.insert( all.end(), p.begin(), p.end() );
+		return all;
+	};
+	struct Good
+	{
+		std::string utf8;
+		std::vector< char32_t > points;
+		const char* what;
+	};
+	const std::vector< Good > good = {
+		{ "C:\\Users\\Steve\\Pictures\\skull.png", ascii( "C:\\Users\\Steve\\Pictures\\skull.png" ), "ASCII" },
+		{ std::string( "C:\\Users\\Zo" ) + "\xC3\xAB" + "\\Bureau\\" + "\xF0\x9F\x91\xBD" + ".png",
+		  join( { ascii( "C:\\Users\\Zo" ), { 0xEB }, ascii( "\\Bureau\\" ), { 0x1F47D }, ascii( ".png" ) } ),
+		  "Latin-1 and an emoji past the BMP (a surrogate pair)" },
+		{ std::string( "D:\\" ) + "\xE3\x83\x91\xE3\x83\xB3\xE3\x83\x80" + "\\" + "\xF0\x9F\x90\xBC" + ".jpg",
+		  join( { ascii( "D:\\" ), { 0x30D1, 0x30F3, 0x30C0 }, ascii( "\\" ), { 0x1F43C }, ascii( ".jpg" ) } ),
+		  "katakana and another emoji" },
+	};
+	int wrong = 0;
+	std::string what;
+	for( const Good& g : good )
+	{
+		std::u16string out;
+		const bool ok = convert( g.utf8, out ) && out == utf16Of( g.points );
+		wrong += !ok;
+		what += fmt( " %s: %s;", g.what, ok ? "exact" : "WRONG" );
+	}
+	Check( wrong == 0, fmt( "%zu paths, %d wrong:%s", good.size(), wrong, what.c_str() ) );
+
+	const std::vector< std::pair< std::string, const char* > > bad = {
+		{ "\xC3", "a truncated two-byte sequence" },
+		{ "\xE2\x82", "a truncated three-byte sequence" },
+		{ "\xC0\xAF", "an overlong '/'" },
+		{ std::string( "\xED\xA0\x80" ), "a UTF-8-encoded surrogate" },
+		{ "\xF4\x90\x80\x80", "a code point past U+10FFFF" },
+		{ std::string( "\x80" ) + "abc", "a lone continuation byte" },
+	};
+	int accepted = 0;
+	what.clear();
+	for( const auto& b : bad )
+	{
+		std::u16string out;
+		const bool took = convert( b.first, out );
+		accepted += took;
+		if( took )
+			what += fmt( " %s accepted;", b.second );
+	}
+	Check( accepted == 0, fmt( "%zu malformed paths, %d accepted (refused, never guessed at)%s", bad.size(), accepted, what.c_str() ) );
+	return Verdict();
+}
+
+//===========================================================================
+// --sprite-motion (no GL): Swarm.cpp's law, on the CPU, in double.
+//===========================================================================
+std::vector< double > frameTimes( double fps, double seconds, bool jitter )
+{
+	std::vector< double > t;
+	if( !jitter )
+	{
+		for( int n = 0; n / fps <= seconds + 1e-12; ++n )
+			t.push_back( n / fps );
+		return t;
+	}
+	double now = 0.0;
+	for( uint32_t n = 0; now <= seconds; ++n )
+	{
+		t.push_back( now );
+		now += 0.008 + 0.022 * hash01( n, 77 );
+	}
+	return t;
+}
+
+int runSpriteMotion( const Perturb& perturb )
+{
+	std::printf( "\n=== sprite-motion: sprites close on the centre at Sprite Speed and start again at the rim, the same at any frame "
+	             "rate\n" );
+	using swarm::Settings;
+	using swarm::Swarm;
+	struct Clock
+	{
+		const char* name;
+		std::vector< double > t;
+	};
+
+	//1. Steady: Stability 1, Spread 0. The range is 1 - start - v t, to the
+	//centre at t* = (1 - start) / v, then 1 - v ( t - t_r ) from the frame
+	//t_r it was reset on, the first at or after t*. Double sums of frame
+	//lengths: 1e-9 is a thousand times their rounding.
+	{
+		const double v = 0.1;
+		Settings s;
+		s.count     = 1;
+		s.seed      = 11;
+		s.speed     = v;
+		s.stability = 1.0;
+		const double r0 = 1.0 - Swarm::StartOf( 0 ), tStar = r0 / v;
+		const std::vector< Clock > clocks = { { "60 fps", frameTimes( 60.0, 14.0, false ) },
+			                                  { "24 fps", frameTimes( 24.0, 14.0, false ) },
+			                                  { "59.94 fps", frameTimes( 59.94, 14.0, false ) },
+			                                  { "jittered 8-30 ms", frameTimes( 0.0, 14.0, true ) } };
+		for( const Clock& clock : clocks )
+		{
+			Swarm sw;
+			sw.SetPerFrameForTest( perturb.spriteMotionPerFrame );
+			double worst = 0.0, respawnAt = -1.0, longest = 0.0;
+			uint32_t generation = 0;
+			for( size_t i = 0; i < clock.t.size(); ++i )
+			{
+				const double dt = i == 0 ? 0.0 : clock.t[ i ] - clock.t[ i - 1 ];
+				longest         = std::max( longest, dt );
+				sw.Step( dt, s );
+				const swarm::Placed p = sw.Sprites()[ 0 ];
+				if( p.generation != generation )
+				{
+					generation = p.generation;
+					if( generation == 1 )
+						respawnAt = clock.t[ i ];
+				}
+				const double want = generation == 0 ? r0 - v * clock.t[ i ] : 1.0 - v * ( clock.t[ i ] - respawnAt );
+				worst             = std::max( worst, std::fabs( p.range - want ) );
+			}
+			const bool onTime = respawnAt >= tStar - 1e-9 && respawnAt < tStar + longest + 1e-9;
+			Check( worst < 1e-9 && onTime && generation == 1,
+			       fmt( "%-16s from r = %.4f at %.3f radii/s: off the law by at most %.1e; reached the centre at %.4f s "
+			            "(t* = %.4f, within a frame: %s) and started again at the rim",
+			            clock.name, r0, v, worst, respawnAt, tStar, onTime ? "yes" : "NO" ) );
+		}
+	}
+
+	//2. Speed Spread: each sprite at its own speed, 1/3x to 3x at 1, all at
+	//Sprite Speed at 0.
+	{
+		const double v = 0.1;
+		for( double spread : { 0.0, 1.0 } )
+		{
+			Settings s;
+			s.count     = 32;
+			s.seed      = 11;
+			s.speed     = v;
+			s.spread    = spread;
+			s.stability = 1.0;
+			Swarm sw;
+			sw.Step( 0.0, s );
+			const auto a = sw.Sprites();
+			sw.Step( 0.5, s );
+			const auto b = sw.Sprites();
+			double lo = 1e30, hi = 0.0, worst = 0.0;
+			int measured = 0;
+			for( size_t i = 0; i < a.size(); ++i )
+			{
+				if( a[ i ].generation != b[ i ].generation )
+					continue;
+				const double rate = ( a[ i ].range - b[ i ].range ) / 0.5;
+				worst             = std::max( worst, std::fabs( rate - Swarm::SpeedOf( s, static_cast< uint32_t >( i ), 0 ) ) );
+				lo                = std::min( lo, rate );
+				hi                = std::max( hi, rate );
+				++measured;
+			}
+			const bool range = spread == 0.0 ? ( std::fabs( lo - v ) < 1e-12 && std::fabs( hi - v ) < 1e-12 )
+			                                 : ( lo >= v / 3.0 - 1e-12 && hi <= 3.0 * v + 1e-12 && hi / lo > 3.0 );
+			Check( measured >= 24 && worst < 1e-12 && range,
+			       fmt( "Speed Spread %.0f: %d sprites, each at its own speed to %.1e; slowest %.4f, fastest %.4f radii/s "
+			            "(Sprite Speed %.2f: %s)",
+			            spread, measured, worst, lo, hi, v, spread == 0.0 ? "all at it" : "1/3x to 3x, and really spread" ) );
+		}
+	}
+
+	//3. Stability 0: the speed wanders and the bearing weaves -- and the
+	//distance is the closed-form integral, so the frame rate cannot move a
+	//sprite. A slot that reached the centre is left out: the overshoot it
+	//drops depends on the frame.
+	{
+		Settings s;
+		s.count     = 8;
+		s.seed      = 11;
+		s.speed     = 0.05;
+		s.spread    = 0.5;
+		s.stability = 0.0;
+		const double T = 6.0;
+		std::vector< Clock > clocks = { { "60 fps", frameTimes( 60.0, T, false ) },
+			                            { "24 fps", frameTimes( 24.0, T, false ) },
+			                            { "240 fps", frameTimes( 240.0, T, false ) },
+			                            { "jittered", frameTimes( 0.0, T - 0.031, true ) } };
+		clocks.back().t.push_back( T );
+		std::vector< std::vector< swarm::Placed > > ends;
+		double fastest = 0.0, slowest = 1e30, bearingSwing = 0.0;
+		for( size_t c = 0; c < clocks.size(); ++c )
+		{
+			Swarm sw;
+			sw.SetPerFrameForTest( perturb.spriteMotionPerFrame );
+			double firstBearing = 0.0, lastRange = 0.0;
+			for( size_t i = 0; i < clocks[ c ].t.size(); ++i )
+			{
+				const double dt = i == 0 ? 0.0 : clocks[ c ].t[ i ] - clocks[ c ].t[ i - 1 ];
+				sw.Step( dt, s );
+				const swarm::Placed p = sw.Sprites()[ 0 ];
+				if( c == 0 && i > 0 && p.generation == 0 )
+				{
+					const double rate = ( lastRange - p.range ) / dt;
+					fastest           = std::max( fastest, rate );
+					slowest           = std::min( slowest, rate );
+					bearingSwing      = std::max( bearingSwing, std::fabs( p.bearing - firstBearing ) );
+				}
+				if( i == 0 )
+					firstBearing = p.bearing;
+				lastRange = p.range;
+			}
+			ends.push_back( sw.Sprites() );
+		}
+		double worst = 0.0;
+		int compared = 0;
+		for( size_t slot = 0; slot < ends[ 0 ].size(); ++slot )
+		{
+			bool still = true;
+			for( const auto& e : ends )
+				still = still && e[ slot ].generation == 0;
+			if( !still )
+				continue;
+			++compared;
+			for( const auto& e : ends )
+				worst = std::max( { worst, std::fabs( e[ slot ].x - ends[ 0 ][ slot ].x ), std::fabs( e[ slot ].y - ends[ 0 ][ slot ].y ) } );
+		}
+		Check( compared >= 4 && worst < 1e-9,
+		       fmt( "Stability 0, 8 sprites after %.0f s at 60, 24, 240 fps and jittered: %d compared, positions agree to %.1e "
+		            "(bound 1e-9)",
+		            T, compared, worst ) );
+		Check( slowest > 0.0 && fastest / slowest > 1.3 && bearingSwing > 0.02,
+		       fmt( "Stability 0 wanders: one sprite's speed between %.4f and %.4f radii/s, its bearing through %.3f rad", slowest,
+		            fastest, bearingSwing ) );
+	}
+
+	//4. The same seed and clock: the same sprites, to the bit. And a count
+	//change keeps the sprites that remain.
+	{
+		Settings s;
+		s.count     = 8;
+		s.seed      = 11;
+		s.speed     = 0.05;
+		s.spread    = 0.5;
+		s.stability = 0.3;
+		const std::vector< double > t = frameTimes( 0.0, 10.0, true );
+		Swarm a, b;
+		int differ = 0;
+		for( size_t i = 0; i < t.size(); ++i )
+		{
+			const double dt = i == 0 ? 0.0 : t[ i ] - t[ i - 1 ];
+			a.Step( dt, s );
+			b.Step( dt, s );
+			const auto pa = a.Sprites(), pb = b.Sprites();
+			for( size_t k = 0; k < pa.size(); ++k )
+				differ += pa[ k ].x != pb[ k ].x || pa[ k ].y != pb[ k ].y || pa[ k ].generation != pb[ k ].generation;
+		}
+		Swarm c;
+		s.count = 5;
+		c.Step( 0.0, s );
+		c.Step( 1.0, s );
+		const auto five = c.Sprites();
+		s.count = 9;
+		c.Step( 0.0, s );
+		const auto nine = c.Sprites();
+		s.count = 3;
+		c.Step( 0.0, s );
+		const auto three = c.Sprites();
+		bool kept = five.size() == 5 && nine.size() == 9 && three.size() == 3;
+		for( size_t k = 0; kept && k < 5; ++k )
+			kept = nine[ k ].x == five[ k ].x && nine[ k ].y == five[ k ].y && ( k >= 3 || ( three[ k ].x == five[ k ].x && three[ k ].y == five[ k ].y ) );
+		for( size_t k = 5; kept && k < 9; ++k )
+			kept = nine[ k ].range == 1.0 - Swarm::StartOf( static_cast< uint32_t >( k ) );
+		Check( differ == 0 && kept,
+		       fmt( "two swarms on one jittered clock (%zu frames): %d positions differ; Sprite Count 5 -> 9 -> 3 keeps the "
+		            "sprites that remain and starts the new ones staggered: %s",
+		            t.size(), differ, kept ? "yes" : "NO" ) );
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --sprite-file: what a file becomes, and the blip when it cannot be one.
+//===========================================================================
+bool sameMask( const sprite::Mask& a, const sprite::Mask& b )
+{
+	return a.width == b.width && a.height == b.height && a.value == b.value;
+}
+
+int runSpriteFile( const Perturb& perturb )
+{
+	std::printf( "\n=== sprite-file: a PNG's alpha or a JPG's brightest channel is the sprite; no file, a bad one or a missing one "
+	             "is the built-in blip\n" );
+	const std::string dir = scratchFolder();
+	auto alphaOf          = []( int x, int y ) { return ( x * 5 + y * 11 ) % 256; };
+	const std::string gradient = dir + "/gradient.png";
+	writeAlphaSprite( gradient, 40, 24, [ & ]( int x, int y ) { return alphaOf( x, y ) / 255.0; }, true );
+	const std::string big = dir + "/big.png";
+	double bigMean        = 0.0;
+	writeAlphaSprite( big, 300, 200, [ & ]( int x, int y ) {
+		const double a = std::hypot( x + 0.5 - 150.0, y + 0.5 - 100.0 ) < 80.0 ? 1.0 : 0.0;
+		bigMean += a / ( 300.0 * 200.0 );
+		return a;
+	} );
+	const std::string alienPng = fixturePath( "alien.png" ), alienJpg = fixturePath( "alien.jpg" ), broken = fixturePath( "broken.png" );
+	const std::string truncated = dir + "/truncated.png";
+	writeBytes( truncated, readBytes( alienPng ).substr( 0, 100 ) );
+	//Non-ASCII all the way down: a folder and a name with accents, a check
+	//mark, katakana, an eszett and an emoji past the BMP.
+	const std::string folder = dir + "/sprit\xC3\xAB" + "s \xE2\x9C\x93 \xF0\x9F\x91\xBD";
+	std::filesystem::create_directories( std::filesystem::u8path( folder ) );
+	const std::string unicode = folder + "/\xE1\xBA\x9E" + "kull \xE3\x83\x91\xE3\x83\xB3\xE3\x83\x80.png";
+	writeBytes( unicode, readBytes( alienPng ) );
+
+	Rig rig;
+	if( !rig.Init( kRasters.back().w, kRasters.back().h ) )
+		return 1;
+	spriteScene( rig );
+	rig.Set( PT_SPRITE_COUNT, 3.0f );
+	rig.plugin.SetSpriteKeepLastOnFailureForTest( perturb.spriteKeepLast );
+	using Source = RadarPlugin::SpriteSource;
+	auto load    = [ & ]( const std::string& path ) {
+		setSpriteFile( rig, path );
+		rig.Render( 1 );
+		return rig.plugin.SpriteMaskForTest();
+	};
+	auto has = [ & ]( const char* text ) { return rig.plugin.SpriteWhyForTest().find( text ) != std::string::npos; };
+
+	sprite::Mask m = load( "" );
+	Check( rig.plugin.SpriteSourceForTest() == Source::BuiltIn && sameMask( m, sprite::BuiltIn() ),
+	       fmt( "no file: the built-in blip, %dx%d", m.width, m.height ) );
+
+	m        = load( gradient );
+	int off  = 0;
+	for( int y = 0; y < 24; ++y )
+		for( int x = 0; x < 40; ++x )
+			off += m.width != 40 || m.value[ static_cast< size_t >( y ) * 40 + x ] != static_cast< float >( alphaOf( x, y ) ) / 255.0f;
+	Check( rig.plugin.SpriteSourceForTest() == Source::File && m.fromAlpha && m.width == 40 && m.height == 24 && off == 0,
+	       fmt( "a 40x24 PNG whose alpha is a known pattern over red: its mask is the alpha, bottom row first, %d of 960 texels "
+	            "wrong (red's brightest channel would be 1 everywhere)",
+	            off ) );
+
+	m           = load( big );
+	double mean = 0.0;
+	for( float v : m.value )
+		mean += v / static_cast< double >( m.value.size() );
+	Check( rig.plugin.SpriteSourceForTest() == Source::File && m.width == 128 && m.height == 85 && std::fabs( mean - bigMean ) < 1e-5,
+	       fmt( "a 300x200 PNG is box-filtered to %dx%d (128 on the longer side) keeping the coverage: mean %.6f against %.6f", m.width,
+	            m.height, mean, bigMean ) );
+
+	const sprite::Mask alien = load( alienPng );
+	const bool alienOk       = rig.plugin.SpriteSourceForTest() == Source::File && alien.fromAlpha && alien.width == 96;
+	m                        = load( alienJpg );
+	int agree                = 0;
+	for( size_t i = 0; i < m.value.size() && i < alien.value.size(); ++i )
+		agree += ( m.value[ i ] > 0.5f ) == ( alien.value[ i ] > 0.5f );
+	Check( alienOk && rig.plugin.SpriteSourceForTest() == Source::File && !m.fromAlpha && m.width == 96
+	           && agree > 0.97 * static_cast< double >( m.value.size() ),
+	       fmt( "tools/fixtures/alien.png is read by its alpha; alien.jpg (the same head on black, no alpha) by its brightest "
+	            "channel, and the two masks agree over 0.5 on %.1f%% of texels",
+	            100.0 * agree / std::max< size_t >( m.value.size(), 1 ) ) );
+
+	m = load( broken );
+	Check( rig.plugin.SpriteSourceForTest() == Source::Fallback && sameMask( m, sprite::BuiltIn() ) && has( "will not decode" ),
+	       fmt( "broken.png (text with a .png name): the blip, and the log says why: \"%s\"", rig.plugin.SpriteWhyForTest().c_str() ) );
+	m = load( dir + "/no such sprite.png" );
+	Check( rig.plugin.SpriteSourceForTest() == Source::Fallback && sameMask( m, sprite::BuiltIn() ) && has( "cannot be opened" ),
+	       fmt( "a missing file: the blip, \"%s\"", rig.plugin.SpriteWhyForTest().c_str() ) );
+	m = load( truncated );
+	Check( rig.plugin.SpriteSourceForTest() == Source::Fallback && sameMask( m, sprite::BuiltIn() ),
+	       fmt( "the first 100 bytes of alien.png: the blip, \"%s\"", rig.plugin.SpriteWhyForTest().c_str() ) );
+	m = load( unicode );
+	Check( rig.plugin.SpriteSourceForTest() == Source::File && sameMask( m, alien ),
+	       "a copy of alien.png in a folder and under a name with accents, a check mark, katakana and an emoji: the same mask "
+	       "(UTF-8 straight through on macOS; Windows widens it, --sprite-utf16)" );
+
+	//The picture: a bad file draws exactly what no file does; a good one not.
+	for( const Raster& raster : kRasters )
+	{
+		Floats pictures[ 3 ];
+		const std::string paths[ 3 ] = { "", broken, alienPng };
+		for( int k = 0; k < 3; ++k )
+		{
+			Rig r;
+			if( !r.Init( raster.w, raster.h ) )
+				return 1;
+			spriteScene( r, 0.0 );
+			r.plugin.SetSpriteKeepLastOnFailureForTest( perturb.spriteKeepLast );
+			r.Set( PT_SPRITE_COUNT, 6.0f );
+			r.Set( PT_SPRITE_SIZE, ParamFromSpriteSize( 0.2 ) );
+			r.Set( PT_SPRITE_SPEED, ParamFromSpriteSpeed( 0.05 ) );
+			setSpriteFile( r, paths[ k ] );
+			if( !r.Render( 60 ) )
+				return 1;
+			pictures[ k ] = r.Output();
+		}
+		Check( pictures[ 0 ] == pictures[ 1 ] && pictures[ 0 ] != pictures[ 2 ],
+		       fmt( "%dx%d  60 frames: broken.png draws exactly what no file does (the blip), alien.png something else", raster.w,
+		            raster.h ) );
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --sprite-threshold: the blip's disc is Sprite Size x (1 - Threshold) across.
+//===========================================================================
+/// The built-in blip as GL samples it: the stated cone at texel centres,
+/// bilinear between them, clamped at the edge. The harness's own model of
+/// the texture, to say how far its reconstruction moves the edge.
+double blipBilinear( double s, double t )
+{
+	constexpr int n = 64;
+	auto texel      = [ & ]( int i, int j ) {
+		i = std::clamp( i, 0, n - 1 );
+		j = std::clamp( j, 0, n - 1 );
+		const double u = ( i + 0.5 ) / n - 0.5, v = ( j + 0.5 ) / n - 0.5;
+		return std::max( 0.0, 1.0 - std::sqrt( u * u + v * v ) / 0.5 );
+	};
+	const double x = s * n - 0.5, y = t * n - 0.5;
+	const int x0 = static_cast< int >( std::floor( x ) ), y0 = static_cast< int >( std::floor( y ) );
+	const double fx = x - x0, fy = y - y0;
+	return ( texel( x0, y0 ) * ( 1 - fx ) + texel( x0 + 1, y0 ) * fx ) * ( 1 - fy )
+	       + ( texel( x0, y0 + 1 ) * ( 1 - fx ) + texel( x0 + 1, y0 + 1 ) * fx ) * fy;
+}
+
+int runSpriteThreshold( const Perturb& perturb )
+{
+	std::printf( "\n=== sprite-threshold: the built-in blip, a cone, is a disc Sprite Size x (1 - Threshold) across in range\n" );
+	const double size = SpriteSizeFromParam( ParamFromSpriteSize( 0.4 ) );
+	for( const Raster& raster : kRasters )
+		for( double threshold : { 0.2, 0.5, 0.8 } )
+		{
+			Rig rig;
+			if( !rig.Init( raster.w, raster.h ) )
+				return 1;
+			spriteScene( rig );
+			rig.plugin.SetDecayForTest( false );
+			rig.plugin.SetSpriteThresholdIgnoredForTest( perturb.spriteThresholdIgnored );
+			rig.Set( PT_RPM, ParamFromRpm( 120.0 ) );//one rotation in 30 frames
+			rig.Set( PT_SPRITE_COUNT, 1.0f );
+			rig.Set( PT_SPRITE_SIZE, ParamFromSpriteSize( 0.4 ) );
+			rig.Set( PT_SPRITE_THRESHOLD, static_cast< float >( threshold ) );
+			if( !rig.Render( 31 ) )
+				return 1;
+			const RadarPlugin::SpriteDraw sp = rig.plugin.SpritesForTest()[ 0 ];
+			const int col                    = nearestColumn( sp.bearing );
+			const Floats column              = rig.PhosphorRect4( col, 0, 1, kRanges );
+			std::vector< double > profile;
+			for( int i = 0; i < kRanges; ++i )
+				profile.push_back( column[ static_cast< size_t >( i ) * 4 + 3 ] );
+			const Width w     = halfMaxWidth( profile );
+			const double meas = w.valid ? ( w.right - w.left ) / kRanges : 0.0;
+			const double law  = size * ( 1.0 - threshold );
+
+			//Where the bilinear texture crosses the threshold along this
+			//column's ray: the reconstruction's own error, which is part of
+			//the bound, stated rather than fitted.
+			const double b = bearingOfBin( col ), ux = std::sin( b ), uy = std::cos( b );
+			const double along = sp.x * ux + sp.y * uy;
+			auto valueAt       = [ & ]( double rho ) {
+				return blipBilinear( ( rho * ux - sp.x ) / size + 0.5, ( rho * uy - sp.y ) / size + 0.5 );
+			};
+			auto edge = [ & ]( double dir ) {
+				double lo = along, hi = along + dir * 0.5 * size;
+				for( int i = 0; i < 60; ++i )
+				{
+					const double mid = 0.5 * ( lo + hi );
+					( valueAt( mid ) > threshold ? lo : hi ) = mid;
+				}
+				return 0.5 * ( lo + hi );
+			};
+			const double model = edge( 1.0 ) - edge( -1.0 );
+			//Per edge: half a range bin (the edge is sampled at bin centres,
+			//and the 2-tap pulse average makes a one-bin ramp) and a quarter
+			//bin for the 0.5-degree beam's average over neighbouring columns,
+			//whose chords are shorter. Plus the texture's own reconstruction.
+			const double bin = 1.0 / kRanges;
+			const double tol = 2.0 * 0.75 * bin + std::fabs( model - law );
+			Check( w.valid && std::fabs( meas - law ) <= tol,
+			       fmt( "%dx%d  Threshold %.1f: %.5f across (%.1f bins) against %.4f x (1 - T) = %.5f; error %.2f bins, bound %.2f "
+			            "(1.5 for the sampling and the beam, %.2f the bilinear texture's)",
+			            raster.w, raster.h, threshold, meas, meas * kRanges, size, law, std::fabs( meas - law ) / bin, tol / bin,
+			            std::fabs( model - law ) / bin ) );
+		}
+	return Verdict();
+}
+
+//===========================================================================
+// --sprites: how many, how big, which way up, and growing -- from the picture.
+//===========================================================================
+int runSprites( const Perturb& perturb )
+{
+	std::printf( "\n=== sprites: Sprite Count blobs on the phosphor and the screen; Size across them; their top where Orientation "
+	             "says; Grow On Approach\n" );
+	const std::string dir    = scratchFolder();
+	const std::string square = dir + "/square.png", top = dir + "/top-half.png";
+	//An opaque white square: no transparency, so the brightest channel (1).
+	writeAlphaSprite( square, 16, 16, []( int, int ) { return 1.0; } );
+	//Only its top half: the mask's centroid is a quarter of the size above
+	//its centre, along the sprite's up.
+	writeAlphaSprite( top, 32, 32, []( int, int y ) { return y >= 16 ? 1.0 : 0.0; } );
+
+	for( const Raster& raster : kRasters )
+	{
+		//1. Count.
+		for( int count : { 1, 5, 12 } )
+		{
+			Rig rig;
+			if( !rig.Init( raster.w, raster.h ) )
+				return 1;
+			spriteScene( rig, 0.0 );
+			rig.plugin.SetDecayForTest( false );
+			rig.Set( PT_RPM, ParamFromRpm( 120.0 ) );
+			rig.Set( PT_SPRITE_COUNT, static_cast< float >( count ) );
+			rig.Set( PT_SPRITE_SIZE, ParamFromSpriteSize( 0.08 ) );
+			if( !rig.Render( 31 ) )
+				return 1;
+			const int polar  = countPolarBlobs( rig.Phosphor4(), 3, 0.05 );
+			const int screen = countScreenBlobs( rig, rig.Output(), 0.2 );
+			Check( polar == count && screen == count,
+			       fmt( "%dx%d  Sprite Count %d: %d blobs on the phosphor, %d on the screen", raster.w, raster.h, count, polar, screen ) );
+		}
+
+		//2. Size: the square, Face Centre, so its height runs along the ray.
+		{
+			Rig rig;
+			if( !rig.Init( raster.w, raster.h ) )
+				return 1;
+			//-30 dB: the video, 1 - exp( -P ), is P to 0.05%, so a half-power
+			//edge is the sprite's edge (at 0 dB the tube's response would
+			//move it out by a fraction of the beam's blur).
+			spriteScene( rig );
+			rig.plugin.SetDecayForTest( false );
+			rig.Set( PT_RPM, ParamFromRpm( 120.0 ) );
+			rig.Set( PT_SPRITE_COUNT, 5.0f );
+			rig.Set( PT_SPRITE_SIZE, ParamFromSpriteSize( 0.2 ) );
+			rig.Set( PT_ORIENTATION, static_cast< float >( Orientation::FaceCentre ) );
+			setSpriteFile( rig, square );
+			if( !rig.Render( 31 ) )
+				return 1;
+			const double size = SpriteSizeFromParam( ParamFromSpriteSize( 0.2 ) );
+			const Floats out  = rig.Output();
+			const double cx = rig.plugin.ScopeCentreX(), cy = rig.plugin.ScopeCentreY(), R = rig.plugin.ScopeRadius();
+			const auto sprites = rig.plugin.SpritesForTest();
+			int measured = 0, wrong = 0;
+			std::string what;
+			for( size_t i = 0; i < sprites.size(); ++i )
+			{
+				const auto& s = sprites[ i ];
+				if( !isolated( sprites, i ) )
+					continue;
+				++measured;
+				const double ux = std::sin( s.bearing ), uy = std::cos( s.bearing );
+				const double px = cx + s.x * R, py = cy + s.y * R;
+				auto extent     = [ & ]( double dx, double dy ) {
+					std::vector< double > profile;
+					for( double d = -0.75 * size * R; d <= 0.75 * size * R; d += 0.05 )
+						profile.push_back( screenLuminance( out, rig.width, rig.height, px + d * dx, py + d * dy ) );
+					const double floor = *std::min_element( profile.begin(), profile.end() );
+					for( double& v : profile )
+						v -= floor;
+					const Width w = halfMaxWidth( profile );
+					return w.valid ? ( w.right - w.left ) * 0.05 : 0.0;
+				};
+				const double radial = extent( ux, uy ), across = extent( uy, -ux );
+				const double polar  = radialExtent( rig, s, 0.75 * size );
+				//One pixel on the screen (the bilinear read's tent and the
+				//pixel grid's phase, twice); 1.5 bins on the phosphor.
+				const bool ok = std::fabs( radial - size * R ) <= 1.0 && std::fabs( across - size * R ) <= 1.0
+				                && std::fabs( polar - size ) <= 1.5 / kRanges;
+				wrong += !ok;
+				what += fmt( " R %.2f: %.2f x %.2f px, %.1f bins;", s.range, radial, across, polar * kRanges );
+			}
+			Check( measured >= 2 && wrong == 0,
+			       fmt( "%dx%d  Sprite Size %.3f (%.2f px, %.1f bins), %d squares measured:%s", raster.w, raster.h, size, size * R,
+			            size * kRanges, measured, what.c_str() ) );
+		}
+
+		//3. Orientation: the top-half sprite's light sits above its centre.
+		for( Orientation orientation : { Orientation::Upright, Orientation::FaceCentre } )
+		{
+			Rig rig;
+			if( !rig.Init( raster.w, raster.h ) )
+				return 1;
+			spriteScene( rig );
+			rig.plugin.SetDecayForTest( false );
+			rig.plugin.SetSpriteOrientationIgnoredForTest( perturb.spriteOrientationIgnored );
+			rig.Set( PT_RPM, ParamFromRpm( 120.0 ) );
+			rig.Set( PT_SPRITE_COUNT, 5.0f );
+			const double R    = 0.95 * 0.5 * std::min( raster.w, raster.h );
+			const double want = std::max( 0.1, 18.0 / R );//at least 18 px across
+			rig.Set( PT_SPRITE_SIZE, ParamFromSpriteSize( want ) );
+			rig.Set( PT_ORIENTATION, static_cast< float >( orientation ) );
+			setSpriteFile( rig, top );
+			if( !rig.Render( 31 ) )
+				return 1;
+			const double size = SpriteSizeFromParam( ParamFromSpriteSize( want ) );
+			const Floats out  = rig.Output();
+			const double cx = rig.plugin.ScopeCentreX(), cy = rig.plugin.ScopeCentreY();
+			const auto sprites = rig.plugin.SpritesForTest();
+			double face        = 1e30;
+			for( int y = 0; y < rig.height; ++y )
+				for( int x = 0; x < rig.width; ++x )
+					if( std::hypot( x + 0.5 - cx, y + 0.5 - cy ) < R - 2.0 )
+						face = std::min( face, pixelLuminance( out, rig.width, x, y ) );
+			int measured = 0, wrong = 0, offNorth = 0;
+			double worstAngle = 0.0, worstLength = 0.0;
+			for( size_t i = 0; i < sprites.size(); ++i )
+			{
+				const auto& s = sprites[ i ];
+				if( !isolated( sprites, i ) )
+					continue;
+				const double px = cx + s.x * R, py = cy + s.y * R, reach = 0.75 * size * R;
+				double sum = 0.0, mx = 0.0, my = 0.0;
+				for( int y = static_cast< int >( py - reach ) - 1; y <= static_cast< int >( py + reach ) + 1; ++y )
+					for( int x = static_cast< int >( px - reach ) - 1; x <= static_cast< int >( px + reach ) + 1; ++x )
+					{
+						if( x < 0 || y < 0 || x >= rig.width || y >= rig.height )
+							continue;
+						const double qx = x + 0.5, qy = y + 0.5;
+						if( std::hypot( qx - px, qy - py ) > reach )
+							continue;
+						//Each pixel belongs to the nearest sprite.
+						bool mine = true;
+						for( size_t j = 0; j < sprites.size(); ++j )
+							mine = mine && ( j == i || std::hypot( qx - ( cx + sprites[ j ].x * R ), qy - ( cy + sprites[ j ].y * R ) )
+							                               >= std::hypot( qx - px, qy - py ) );
+						if( !mine )
+							continue;
+						const double l = pixelLuminance( out, rig.width, x, y ) - face;
+						sum += l;
+						mx += l * ( qx - px );
+						my += l * ( qy - py );
+					}
+				if( sum <= 0.0 )
+					continue;
+				++measured;
+				mx /= sum;
+				my /= sum;
+				const double ex = orientation == Orientation::FaceCentre ? std::sin( s.bearing ) : 0.0;
+				const double ey = orientation == Orientation::FaceCentre ? std::cos( s.bearing ) : 1.0;
+				const double length = std::hypot( mx, my );
+				const double angle  = std::acos( std::clamp( ( mx * ex + my * ey ) / std::max( length, 1e-12 ), -1.0, 1.0 ) ) * 180.0 / kPi;
+				const double ratio  = length / ( 0.25 * size * R );
+				worstAngle          = std::max( worstAngle, angle );
+				worstLength         = std::max( worstLength, std::fabs( ratio - 1.0 ) );
+				wrong += angle > 5.0 || std::fabs( ratio - 1.0 ) > 0.25;
+				const double fromNorth = std::fabs( std::remainder( s.bearing, 2.0 * kPi ) ) * 180.0 / kPi;
+				offNorth += fromNorth > 30.0;
+			}
+			//Face Centre is only told from Upright by sprites away from north.
+			Check( measured >= 2 && offNorth >= 2 && wrong == 0,
+			       fmt( "%dx%d  %s: %d sprites, the light's centroid within %.2f deg of %s, at %.0f%%-%.0f%% of a quarter size from "
+			            "the centre (bounds 5 deg, 25%%); %d of them more than 30 deg from north",
+			            raster.w, raster.h, orientation == Orientation::FaceCentre ? "Face Centre" : "Upright", measured, worstAngle,
+			            orientation == Orientation::FaceCentre ? "outward" : "screen up", 100.0 * ( 1.0 - worstLength ),
+			            100.0 * ( 1.0 + worstLength ), offNorth ) );
+		}
+
+		//4. Grow On Approach: Size x ( 1 + 3 g ( 1 - R ) ), here g = 1.
+		{
+			Rig rig;
+			if( !rig.Init( raster.w, raster.h ) )
+				return 1;
+			spriteScene( rig );
+			rig.plugin.SetDecayForTest( false );
+			rig.Set( PT_RPM, ParamFromRpm( 120.0 ) );
+			rig.Set( PT_SPRITE_COUNT, 5.0f );
+			rig.Set( PT_SPRITE_SIZE, ParamFromSpriteSize( 0.04 ) );
+			rig.Set( PT_ORIENTATION, static_cast< float >( Orientation::FaceCentre ) );
+			rig.Set( PT_SPRITE_GROW, 1.0f );
+			setSpriteFile( rig, square );
+			if( !rig.Render( 31 ) )
+				return 1;
+			const double size = SpriteSizeFromParam( ParamFromSpriteSize( 0.04 ) );
+			int measured = 0, wrong = 0;
+			std::string what;
+			const auto sprites = rig.plugin.SpritesForTest();
+			for( size_t i = 0; i < sprites.size(); ++i )
+			{
+				const auto& s      = sprites[ i ];
+				const double grown = size * ( 1.0 + 3.0 * ( 1.0 - s.range ) );
+				if( !isolated( sprites, i ) )
+					continue;
+				const double polar = radialExtent( rig, s, 0.75 * grown );
+				++measured;
+				wrong += std::fabs( polar - grown ) > 1.5 / kRanges;
+				what += fmt( " R %.2f: %.4f (%.4f);", s.range, polar, grown );
+			}
+			Check( measured >= 3 && wrong == 0,
+			       fmt( "%dx%d  Grow On Approach 1, Size %.3f: across, against Size x (1 + 3 (1 - R)) to 1.5 bins:%s", raster.w,
+			            raster.h, size, what.c_str() ) );
+		}
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --sprite-speed: from the painted frames, a sprite closes at Sprite Speed.
+//===========================================================================
+int runSpriteSpeed( const Perturb& perturb )
+{
+	std::printf( "\n=== sprite-speed: read off the phosphor each time the beam paints it, a sprite closes on the centre at Sprite "
+	             "Speed and starts again at the rim\n" );
+	const double v      = SpriteSpeedFromParam( ParamFromSpriteSpeed( 0.15 ) );
+	const double pulse  = kMetresPerMicrosecond * PulseFromParam( ParamFromPulse( 0.05 ) ) / 1000.0 / 24.0;
+	const double r0     = 1.0 - swarm::Swarm::StartOf( 0 ), tStar = r0 / v;
+	for( const Raster& raster : kRasters )
+		for( double fps : { 60.0, 24.0 } )
+		{
+			Rig rig;
+			rig.fps = fps;
+			if( !rig.Init( raster.w, raster.h ) )
+				return 1;
+			spriteScene( rig );
+			rig.plugin.SetSpritePerFrameForTest( perturb.spriteSpeedPerFrame );
+			rig.Set( PT_RPM, ParamFromRpm( 120.0 ) );
+			rig.Set( PT_PERSISTENCE, ParamFromPersistence( 0.1 ) );
+			rig.Set( PT_SPRITE_COUNT, 1.0f );
+			rig.Set( PT_SPRITE_SIZE, ParamFromSpriteSize( 0.05 ) );
+			rig.Set( PT_SPRITE_SPEED, ParamFromSpriteSpeed( 0.15 ) );
+			struct Sample
+			{
+				double t, r;
+				uint32_t generation;
+			};
+			std::vector< Sample > samples;
+			double tRespawn = -1.0;
+			for( int f = 0; f < static_cast< int >( 6.2 * fps ); ++f )
+			{
+				const double b0 = rig.plugin.AntennaBins();
+				if( !rig.Render( 1 ) )
+					return 1;
+				const double t = f / fps;
+				if( tRespawn < 0.0 && t >= tStar - 1e-9 )
+					tRespawn = t;
+				const double b1 = rig.plugin.AntennaBins();
+				const auto s    = rig.plugin.SpritesForTest()[ 0 ];
+				const int col   = nearestColumn( s.bearing );
+				bool crossed    = false;
+				for( int64_t k = sweep::floorToInt( b0 ) + 1; k <= sweep::floorToInt( b1 ); ++k )
+					crossed = crossed || sweep::Column( k, kBearings ) == col;
+				if( !crossed )
+					continue;
+				//The flash share: what this paint put there, the last one's
+				//gone by e^-14 (35 ms against a rotation of 0.5 s).
+				const Floats column = rig.PhosphorRect4( col, 0, 1, kRanges );
+				double sum = 0.0, moment = 0.0;
+				for( int i = 0; i < kRanges; ++i )
+				{
+					const double value = column[ static_cast< size_t >( i ) * 4 + 2 ];
+					sum += value;
+					moment += value * ( i + 0.5 ) / kRanges;
+				}
+				//A disc the rim or the centre cuts is not a disc: its centroid
+				//is not its centre. The blip at Threshold 0.5 is Size / 2 across.
+				const double want   = tRespawn < 0.0 ? r0 - v * t : 1.0 - v * ( t - tRespawn );
+				const double radius = 0.25 * SpriteSizeFromParam( ParamFromSpriteSize( 0.05 ) );
+				if( sum > 0.0 && want - radius > 2.0 / kRanges && want + radius + pulse < 1.0 - 2.0 / kRanges )
+					samples.push_back( { t, moment / sum - 0.5 * pulse, tRespawn >= 0.0 ? 1u : 0u } );
+			}
+			//The law, from the stated speed alone: r0 - v t, then 1 - v ( t - t_r ).
+			double worst = 0.0, sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0;
+			int before = 0, after = 0;
+			for( const Sample& s : samples )
+			{
+				const double want = s.generation == 0 ? r0 - v * s.t : 1.0 - v * ( s.t - tRespawn );
+				worst             = std::max( worst, std::fabs( s.r - want ) );
+				if( s.generation == 0 )
+				{
+					++before;
+					sx += s.t;
+					sy += s.r;
+					sxx += s.t * s.t;
+					sxy += s.t * s.r;
+				}
+				else
+					++after;
+			}
+			const double slope = before > 1 ? ( before * sxy - sx * sy ) / ( before * sxx - sx * sx ) : 0.0;
+			const double zero  = slope != 0.0 ? -( sy - slope * sx ) / before / slope : 0.0;
+			//A quarter of a range bin per paint: the centroid of a disc's
+			//chord, sampled at bin centres, its two-tap edges symmetric.
+			const double bound = 0.25 / kRanges;
+			Check( before >= 6 && after >= 1 && worst <= bound && std::fabs( slope + v ) <= 1e-3 * v && std::fabs( zero - tStar ) <= 1.0 / fps,
+			       fmt( "%dx%d %2.0f fps: %d paints closing, %d after the rim: off the law by at most %.2f bins (bound 0.25); slope "
+			            "%.5f radii/s against %.5f; reaches the centre at %.3f s (t* %.3f)",
+			            raster.w, raster.h, fps, before, after, worst * kRanges, -slope, v, zero, tStar ) );
+		}
+	return Verdict();
+}
+
+//===========================================================================
+// --sprite-beam: the beam reveals a sprite and the phosphor lets it go.
+//===========================================================================
+int runSpriteBeam( const Perturb& perturb )
+{
+	std::printf( "\n=== sprite-beam: a sprite is dark until the sweep reaches it, then its share decays as A_f e^(-t/tau_f) + A_a "
+	             "e^(-t/tau_a) until the next sweep\n" );
+	for( const Raster& raster : kRasters )
+	{
+		Rig rig;
+		if( !rig.Init( raster.w, raster.h ) )
+			return 1;
+		spriteScene( rig );
+		rig.plugin.SetSpriteNoFadeForTest( perturb.spriteNoFade );
+		const double rpm = 20.0, tauA = 1.5, flash = 2.0;
+		rig.Set( PT_RPM, ParamFromRpm( rpm ) );
+		rig.Set( PT_PERSISTENCE, ParamFromPersistence( tauA ) );
+		rig.Set( PT_FLASH, static_cast< float >( flash / 4.0 ) );
+		rig.Set( PT_PHOSPHOR, static_cast< float >( Phosphor::P7 ) );
+		rig.Set( PT_SPRITE_COUNT, 1.0f );
+		rig.Set( PT_SPRITE_SIZE, ParamFromSpriteSize( 0.1 ) );
+		if( !rig.Render( 1 ) )
+			return 1;
+		const auto sp       = rig.plugin.SpritesForTest()[ 0 ];
+		const int column    = nearestColumn( sp.bearing );
+		const int row       = static_cast< int >( sp.range * kRanges );
+		const double tauF   = FlashTauFor( Phosphor::P7 );
+		const double aFlash = FlashFromParam( static_cast< float >( flash / 4.0 ) );
+		rig.plugin.SetPolarViewForTest( true, column - 8, row - 8, true );
+		const double rate   = RpmFromParam( ParamFromRpm( rpm ) ) / 60.0 * kBearings;
+		const double paint1 = ( column + 0.5 ) / rate, period = kBearings / rate;
+		double energy = -1.0, worstF = 0.0, worstA = 0.0, repaintFlash = 0.0, shareOff = 0.0;
+		int dark = 0, lit = 0, wrongF = 0, wrongA = 0, frames = 0;
+		for( int f = 1; f < static_cast< int >( ( paint1 + 1.6 * period ) * 60.0 ); ++f )
+		{
+			if( !rig.Render( 1 ) )
+				return 1;
+			const double t = f / 60.0;
+			Floats texel( 4 );
+			glBindFramebuffer( GL_FRAMEBUFFER, rig.outputFBO );
+			glReadPixels( 8, 8, 1, 1, GL_RGBA, GL_FLOAT, texel.data() );
+			if( t < paint1 - 1.0 / 60.0 )
+			{
+				//Before the sweep: the sprite is there, nothing shows it.
+				const Floats raw = rig.PhosphorRect4( column, row, 1, 1 );
+				dark += texel[ 0 ] != 0.0f || texel[ 1 ] != 0.0f || raw[ 0 ] != 0.0f || raw[ 1 ] != 0.0f;
+				++lit;
+				continue;
+			}
+			if( t < paint1 )
+				continue;
+			double wantF = 0.0, wantA = 0.0;
+			for( double p = paint1; p <= t; p += period )
+			{
+				wantF += aFlash * std::exp( -( t - p ) / tauF );
+				wantA += std::exp( -( t - p ) / tauA );
+			}
+			if( energy < 0.0 )
+			{
+				energy = texel[ 1 ] / wantA;
+				//In a scene of nothing but the sprite, the share is the whole.
+				const Floats raw = rig.PhosphorRect4( column, row, 1, 1 );
+				shareOff         = std::max( std::fabs( raw[ 2 ] - raw[ 0 ] ) / raw[ 0 ], std::fabs( raw[ 3 ] - raw[ 1 ] ) / raw[ 1 ] );
+			}
+			const double tol = 8.0 * kUlp;
+			const double eF  = std::fabs( texel[ 0 ] - energy * wantF ) - 1e-12 * energy;
+			const double eA  = std::fabs( texel[ 1 ] - energy * wantA ) - 1e-12 * energy;
+			worstF           = std::max( worstF, eF / ( energy * std::max( wantF, 1e-300 ) ) );
+			worstA           = std::max( worstA, eA / ( energy * wantA ) );
+			wrongF += eF > tol * energy * wantF;
+			wrongA += eA > tol * energy * wantA;
+			if( t >= paint1 + period && repaintFlash == 0.0 )
+				repaintFlash = texel[ 0 ] / ( energy * aFlash * std::exp( -( t - paint1 - period ) / tauF ) );
+			++frames;
+		}
+		Check( lit > 10 && dark == 0, fmt( "%dx%d  %d frames before the sweep first reaches the sprite (%.2f s): its texels are 0, "
+		                                   "%d were not",
+		                                   raster.w, raster.h, lit, paint1, dark ) );
+		Check( wrongF == 0 && wrongA == 0 && energy > 0.0 && shareOff <= 4.0 * kUlp,
+		       fmt( "%dx%d  %d frames after: the sprites' share decays as the law to %.2e (flash) and %.2e (afterglow), bound 8 ulp; "
+		            "with nothing else lit it is the whole echo to %.1e (bound 4 ulp)",
+		            raster.w, raster.h, frames, worstF, worstA, shareOff ) );
+		Check( std::fabs( repaintFlash - 1.0 ) <= 16.0 * kUlp,
+		       fmt( "%dx%d  60/RPM = %.2f s later the sweep repaints it: its flash back to %.6f of the first (bound 16 ulp)", raster.w,
+		            raster.h, period, repaintFlash ) );
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --sprite-repeat: the same settings and clock, the same picture.
+//===========================================================================
+int runSpriteRepeat( const Perturb& perturb )
+{
+	std::printf( "\n=== sprite-repeat: two instances with the same settings and clock render the same frame, to the bit, and a "
+	             "frame's sprites are where the clock says at any frame rate\n" );
+	auto configure = [ & ]( Rig& rig ) {
+		//Clutter and noise stay (their speckle is hashed too); the land and
+		//the rain go, because the coast's shadow costs the software renderer
+		//a third of a second a frame and has nothing to do with sprites.
+		rig.Set( PT_LAND, 0.0f );
+		rig.Set( PT_RAIN, 0.0f );
+		rig.plugin.SetSpriteWallSeedForTest( perturb.spriteWallSeed );
+		rig.Set( PT_SPRITE_COUNT, 12.0f );
+		rig.Set( PT_SPRITE_SPEED, ParamFromSpriteSpeed( 0.05 ) );
+		rig.Set( PT_SPEED_SPREAD, 0.6f );
+		rig.Set( PT_STABILITY, 0.3f );
+		rig.Set( PT_ORIENTATION, static_cast< float >( Orientation::FaceCentre ) );
+		rig.Set( PT_SPRITE_GROW, 0.5f );
+		rig.Set( PT_SPRITE_HUE, 0.3f );
+		rig.Set( PT_SPRITE_SATURATION, 0.8f );
+		setSpriteFile( rig, fixturePath( "alien.png" ) );
+	};
+	for( const Raster& raster : kRasters )
+	{
+		Rig a, b, c;
+		c.fps = 30.0;
+		if( !a.Init( raster.w, raster.h ) || !b.Init( raster.w, raster.h ) || !c.Init( raster.w, raster.h ) )
+			return 1;
+		configure( a );
+		configure( b );
+		configure( c );
+		if( !a.Render( 121 ) || !b.Render( 121 ) || !c.Render( 61 ) )
+			return 1;
+		const Floats pa = a.Output(), pb = b.Output();
+		size_t differ   = 0;
+		for( size_t i = 0; i < pa.size(); ++i )
+			differ += pa[ i ] != pb[ i ];
+		const auto sa = a.plugin.SpritesForTest(), sc = c.plugin.SpritesForTest();
+		double worst  = 0.0;
+		int compared  = 0;
+		for( size_t i = 0; i < sa.size() && i < sc.size(); ++i )
+		{
+			//Only a sprite on its first approach in both runs: one that has
+			//been back to the rim dropped a frame-sized overshoot there.
+			if( sa[ i ].generation != 0 || sc[ i ].generation != 0 )
+				continue;
+			++compared;
+			worst = std::max( { worst, std::fabs( sa[ i ].x - sc[ i ].x ), std::fabs( sa[ i ].y - sc[ i ].y ) } );
+		}
+		Check( differ == 0, fmt( "%dx%d  2 s of 12 alien sprites, wandering, Face Centre, growing, tinted, over clutter and noise: %zu of %zu output floats "
+		                         "differ between the two instances",
+		                         raster.w, raster.h, differ, pa.size() ) );
+		Check( compared >= 6 && worst < 1e-9,
+		       fmt( "%dx%d  the same 2 s at 30 fps: %d sprites still on their first approach where 60 fps put them, to %.1e", raster.w,
+		            raster.h, compared, worst ) );
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --sprite-colour: Hue turns the phosphor's colours, Saturation scales them.
+//===========================================================================
+int runSpriteColour( const Perturb& perturb )
+{
+	std::printf( "\n=== sprite-colour: the sprites glow in the phosphor's colours turned by Hue about the grey axis, their chroma "
+	             "scaled by 2 x Saturation\n" );
+	const std::string square = scratchFolder() + "/square.png";
+	writeAlphaSprite( square, 16, 16, []( int, int ) { return 1.0; } );
+	for( const Raster& raster : kRasters )
+	{
+		struct Setting
+		{
+			double hue, saturation;
+		};
+		const Setting settings[] = { { 0.0, 0.5 }, { 1.0 / 3.0, 0.5 }, { 0.0, 0.75 }, { 0.0, 0.0 } };
+		Floats out[ 5 ];
+		for( int k = 0; k < 5; ++k )
+		{
+			Rig rig;
+			if( !rig.Init( raster.w, raster.h ) )
+				return 1;
+			spriteScene( rig, 0.0 );
+			rig.plugin.SetSpriteHueBackwardsForTest( perturb.spriteHueBackwards );
+			rig.Set( PT_RPM, ParamFromRpm( 120.0 ) );
+			//The fifth: no sprites at all, the empty face to take away.
+			rig.Set( PT_SPRITE_COUNT, k == 4 ? 0.0f : 5.0f );
+			rig.Set( PT_SPRITE_SIZE, ParamFromSpriteSize( 0.15 ) );
+			rig.Set( PT_SPRITE_HUE, static_cast< float >( settings[ k % 4 ].hue ) );
+			rig.Set( PT_SPRITE_SATURATION, static_cast< float >( settings[ k % 4 ].saturation ) );
+			setSpriteFile( rig, square );
+			if( !rig.Render( 40 ) )
+				return 1;
+			out[ k ] = rig.Output();
+		}
+		//Light before the tube: -ln( 1 - out ), less the same pixel's with no
+		//sprites (the face, and the scope's edge).
+		auto light = [ & ]( const Floats& o, size_t i, double l[ 3 ] ) {
+			for( int c = 0; c < 3; ++c )
+				l[ c ] = -std::log( 1.0 - static_cast< double >( o[ i * 4 + c ] ) ) + std::log( 1.0 - static_cast< double >( out[ 4 ][ i * 4 + c ] ) );
+		};
+		const double a = 2.0 * kPi / 3.0, k3 = 1.0 / std::sqrt( 3.0 );
+		double worst[ 3 ] = { 0.0, 0.0, 0.0 };
+		int pixels        = 0;
+		for( size_t i = 0; i < static_cast< size_t >( raster.w ) * raster.h; ++i )
+		{
+			double base[ 3 ];
+			light( out[ 0 ], i, base );
+			const double scale = std::max( { base[ 0 ], base[ 1 ], base[ 2 ] } );
+			if( scale < 0.2 )
+				continue;
+			++pixels;
+			const double mean = ( base[ 0 ] + base[ 1 ] + base[ 2 ] ) / 3.0;
+			const double cross[ 3 ] = { k3 * ( base[ 2 ] - base[ 1 ] ), k3 * ( base[ 0 ] - base[ 2 ] ), k3 * ( base[ 1 ] - base[ 0 ] ) };
+			double l[ 3 ];
+			for( int s = 1; s < 4; ++s )
+			{
+				light( out[ s ], i, l );
+				for( int c = 0; c < 3; ++c )
+				{
+					double want;
+					if( s == 1 )
+						want = base[ c ] * std::cos( a ) + cross[ c ] * std::sin( a ) + mean * ( 1.0 - std::cos( a ) );
+					else
+						want = mean + ( base[ c ] - mean ) * 2.0 * settings[ s ].saturation;
+					worst[ s - 1 ] = std::max( worst[ s - 1 ], std::fabs( l[ c ] - want ) / scale );
+				}
+			}
+		}
+		//1e-4 of the brightest channel: float -ln( 1 - out ) near out = 0.9
+		//is good to ~1e-6 relative, and the share is the whole echo to ulps.
+		Check( pixels > 50 && worst[ 0 ] < 1e-4 && worst[ 1 ] < 1e-4 && worst[ 2 ] < 1e-4,
+		       fmt( "%dx%d  %d sprite pixels, P7: Hue 1/3 is the untinted light turned 120 deg (off by %.1e), Saturation 0.75 its "
+		            "chroma x1.5 (%.1e), Saturation 0 grey (%.1e); bound 1e-4",
+		            raster.w, raster.h, pixels, worst[ 0 ], worst[ 1 ], worst[ 2 ] ) );
+	}
+	return Verdict();
+}
+
 struct CheckEntry
 {
 	const char* flag;
@@ -1936,6 +3281,11 @@ const std::vector< CheckEntry >& checks()
 		{ "over", runOver, false },     { "prime", runPrime, false },   { "resize", runResize, false },
 		{ "clock", runClock, false },   { "cues", runCues, true },      { "names", runNames, true },
 		{ "state", runState, false },
+		{ "sprite-utf16", runSpriteUtf16, true }, { "sprite-motion", runSpriteMotion, true },
+		{ "sprite-file", runSpriteFile, false },  { "sprite-threshold", runSpriteThreshold, false },
+		{ "sprites", runSprites, false },         { "sprite-speed", runSpriteSpeed, false },
+		{ "sprite-beam", runSpriteBeam, false },  { "sprite-repeat", runSpriteRepeat, false },
+		{ "sprite-colour", runSpriteColour, false },
 	};
 	return list;
 }
@@ -1977,6 +3327,20 @@ int runNegative( bool offlineOnly = false )
 	add( "resize", runResize, "clear the phosphor on a resize", []( Perturb& p ) { p.resizeClears = true; } );
 	add( "clock", runClock, "take elapsed time from the host clock in float", []( Perturb& p ) { p.clockFloat = true; } );
 	add( "cues", runCues, "ramp every control between keys", []( Perturb& p ) { p.cuesRamp = true; } );
+	add( "sprite-utf16", runSpriteUtf16, "widen a path byte by byte, as a narrow fopen reads it",
+	     []( Perturb& p ) { p.spriteUtf16Bytes = true; } );
+	add( "sprite-motion", runSpriteMotion, "add Sprite Speed / 60 a frame, whatever the frame's length",
+	     []( Perturb& p ) { p.spriteMotionPerFrame = true; } );
+	add( "sprite-file", runSpriteFile, "leave the last good picture up when a file fails",
+	     []( Perturb& p ) { p.spriteKeepLast = true; } );
+	add( "sprite-threshold", runSpriteThreshold, "take any alpha at all as the target",
+	     []( Perturb& p ) { p.spriteThresholdIgnored = true; } );
+	add( "sprites", runSprites, "draw Face Centre upright", []( Perturb& p ) { p.spriteOrientationIgnored = true; } );
+	add( "sprite-speed", runSpriteSpeed, "tie the plugin's sprite motion to frames, not time",
+	     []( Perturb& p ) { p.spriteSpeedPerFrame = true; } );
+	add( "sprite-beam", runSpriteBeam, "never fade the sprites' share", []( Perturb& p ) { p.spriteNoFade = true; } );
+	add( "sprite-repeat", runSpriteRepeat, "salt the sprites' seed from the wall clock", []( Perturb& p ) { p.spriteWallSeed = true; } );
+	add( "sprite-colour", runSpriteColour, "turn Hue the other way", []( Perturb& p ) { p.spriteHueBackwards = true; } );
 
 	if( offlineOnly )
 		cases.erase( std::remove_if( cases.begin(), cases.end(), []( const Case& c ) { return !isOffline( c.name ); } ), cases.end() );
@@ -2037,7 +3401,9 @@ int main( int argc, char** argv )
 			             "  --film N          N frames, raw RGBA on stdout (the Over on its card)\n"
 			             "  --script PATH     cues for --pipe/--film: 'frame Name value'\n\n"
 			             "  checks: --arc --pulse --sweep --persist --r4 --over-check --prime --resize --clock --state\n"
-			             "          --sweep-law --cues --names (no GL)   --negative   --bench\n"
+			             "          --sprite-file --sprite-threshold --sprites --sprite-speed --sprite-beam\n"
+			             "          --sprite-repeat --sprite-colour\n"
+			             "          --sweep-law --cues --names --sprite-utf16 --sprite-motion (no GL)   --negative   --bench\n"
 			             "  --offline         the checks and negative controls that need no GL context (CI)\n" );
 			return 0;
 		}
@@ -2125,6 +3491,8 @@ int main( int argc, char** argv )
 					line += std::string( "\"type\": \"ParamBoolean\", \"default\": " ) + ( p.value > 0.5f ? "true" : "false" );
 				else if( p.type == FF_TYPE_EVENT )
 					line += "\"type\": \"ParamEvent\"";
+				else if( p.type == FF_TYPE_FILE )
+					line += "\"type\": \"ParamFile\", \"default\": \"\"";
 				else if( p.type == FF_TYPE_TEXT )
 					line += "\"type\": \"ParamString\", \"default_pattern\": \"^Radar\\\\ v{version}\\\\ \\\\-\\\\ MIT\\\\ \\\\-\\\\ Stoatworks\\\\ Labs,\\\\ stoatworks\\\\-labs\\\\.com$\"";
 				else
@@ -2137,6 +3505,15 @@ int main( int argc, char** argv )
 					line += ", \"requires\": \"audio\"";
 				if( over && ( p.name == "Bearing Marks" || p.name == "Heading Line" ) )
 					line += ", \"needs\": {\"Scope Size\": 0.0}";
+				//The sprites are off by default (radar#5): every other sprite
+				//control shows only with some on, and Orientation only with a
+				//picture that is not round.
+				if( std::string( GroupOf( plugin.IdOfHostForTest( p.index ) ) ) == "Sprites" && p.name != "Sprite Count" )
+					line += ", \"needs\": {\"Sprite Count\": 10.0}";
+				if( p.name == "Orientation" )
+					line += ", \"note\": \"needs an asymmetric Sprite File to show (tools/fixtures/alien.png)\"";
+				if( p.name == "Sprite File" )
+					line += ", \"note\": \"a fixture to load: tools/fixtures/alien.png (empty is the built-in blip)\"";
 				if( p.name == "Direction" || p.name == "RPM" || p.name == "Persistence" || p.name == "Flash" )
 					line += ", \"note\": \"acts over time: a still carrier and single grabs may read it DEAD (the gate's blind spot)\"";
 				line += i + 1 < list.size() ? "},\n" : "}\n";

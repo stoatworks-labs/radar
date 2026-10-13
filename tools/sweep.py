@@ -17,6 +17,7 @@ vectrix's lesson, a control can be alive, correct and still useless.
 
 Every render is 320x180 (CI's raster) and 160 frames at 60 fps: one rotation of
 the default 24 rpm antenna and a little more, so every bearing has been painted.
+Sprite File is swept from empty (the built-in blip) to tools/fixtures/alien.png.
 
 Usage::
 
@@ -33,6 +34,12 @@ import tempfile
 import zlib
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
+
+# The sprites (radar#5) are off by default (Sprite Count 0), so each of their
+# controls is swept with ten of them on, over open water, and the ones a
+# round blip cannot show (Orientation) with the committed fixture's alien.
+ALIEN = str(REPO / "tools" / "fixtures" / "alien.png")
+SPRITES = ["Sprite Count=10", "Land=0", "Threshold=1"]
 
 # name -> (low setting, high setting, context settings, extra flags)
 SWEEP = {
@@ -61,6 +68,17 @@ SWEEP = {
     "Heading Line": ("0", "1", ["Scope Size=0"], []),
     "Scope Size": ("0", "1", [], []),
     "Mix": ("0", "1", [], []),
+    "Sprite File": ("", ALIEN, SPRITES + ["Sprite Size=0.7"], []),
+    "Sprite Threshold": ("0.1", "0.9", SPRITES + ["Sprite Size=0.7"], []),
+    "Sprite Count": ("0", "16", ["Land=0", "Threshold=1"], []),
+    "Sprite Size": ("0.3", "0.8", SPRITES, []),
+    "Sprite Speed": ("0", "1", SPRITES, []),
+    "Speed Spread": ("0", "1", SPRITES + ["Sprite Speed=0.8"], []),
+    "Stability": ("0", "1", SPRITES + ["Sprite Speed=0.8"], []),
+    "Orientation": ("0", "1", SPRITES + ["Sprite File=" + ALIEN, "Sprite Size=0.7"], []),
+    "Hue": ("0", "0.5", SPRITES, []),
+    "Saturation": ("0", "1", SPRITES, []),
+    "Grow On Approach": ("0", "1", SPRITES, []),
 }
 
 # Parameters with no pixel to sweep: the FFT buffer (its float is meaningless;
@@ -129,7 +147,7 @@ def parameters(ratest, effect):
 def sweep_one(ratest, scratch, effect, name, declared):
     low, high, context, extra = SWEEP[name]
     # A context names controls of either plugin; each keeps its own.
-    context = [c for c in context if c.split("=")[0] in declared]
+    context = [c for c in context if c.split("=", 1)[0] in declared]
     tag = f"{'o' if effect else 's'}{abs(hash(name))}"
     a = scratch / f"{tag}-a.png"
     b = scratch / f"{tag}-b.png"

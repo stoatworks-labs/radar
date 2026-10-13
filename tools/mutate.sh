@@ -5,8 +5,8 @@
 # the code it claims to cover -- and a harness that compiled its own copy of
 # the shaders would pass every GLSL mutant here.
 #
-# Each mutant is a copy of the tree in a temporary directory (the FFGL SDK is
-# symlinked, not copied), built arm64-only, with only the named check run.
+# Each mutant is a copy of the tree in a temporary directory (the FFGL SDK and
+# stb_image are symlinked, not copied), built arm64-only, with only the named check run.
 #
 #     tools/mutate.sh
 #
@@ -20,8 +20,10 @@ trap 'rm -rf "$WORK"' EXIT
 MUTANTS=(
 	"source/Shaders.cpp|float g  = exp( -LN2 * q * q );|float g  = exp( -LN2 * q / q );|--arc|GLSL: the Gaussian beam's q * q -> q / q"
 	"source/Shaders.cpp|min( hi, tg.y + PulseExtent )|min( hi, tg.y - PulseExtent )|--pulse|GLSL: the pulse runs inward, + -> -"
-	"source/Shaders.cpp|return texelFetch( Phosphor, ivec2( c, r ), 0 ).rg * texelFetch( Fade|return texelFetch( Phosphor, ivec2( c, r ), 0 ).rg / texelFetch( Fade|--persist|GLSL: the composite divides by the fade, * -> /"
+	"source/Shaders.cpp|return texelFetch( Phosphor, ivec2( c, r ), 0 ) * fade;|return texelFetch( Phosphor, ivec2( c, r ), 0 ) / fade;|--persist|GLSL: the composite divides by the fade, * -> /"
 	"source/Sweep.h|first = floorToInt( b0 ) + 1;|first = floorToInt( b0 ) + 2;|--sweep|C++: the wedge starts a bin late, 1 -> 2"
+	"source/Shaders.cpp|/ ( 2.0 * box.zw ) + 0.5|/ ( 4.0 * box.zw ) + 0.5|--sprites|GLSL: every sprite drawn twice its size, 2.0 -> 4.0"
+	"source/Swarm.cpp|p.range      = std::max( 0.0, 1.0 - s.travelled );|p.range      = std::max( 0.0, 1.5 - s.travelled );|--sprite-motion|C++: sprites start half a radius out, 1.0 -> 1.5"
 )
 
 caught=0
@@ -32,6 +34,7 @@ for entry in "${MUTANTS[@]}"; do
 	mkdir -p "$tree/external"
 	cp -R "$REPO/source" "$REPO/tools" "$REPO/cmake" "$REPO/CMakeLists.txt" "$tree/"
 	ln -s "$REPO/external/ffgl" "$tree/external/ffgl"
+	ln -s "$REPO/external/stb" "$tree/external/stb"
 
 	python3 - "$tree/$file" "$original" "$mutant" <<'PY'
 import sys, pathlib

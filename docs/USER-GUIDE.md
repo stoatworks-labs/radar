@@ -21,14 +21,19 @@ east with the trail fading behind it.*
 > degrees; its streak is c tau / 2 long to 8 × 10⁻⁵ of a range bin, running outward; every bearing
 > is painted exactly once a rotation at whole, fractional and jittered frame rates; equal targets
 > fall with range with a slope of −3.9998 against the radar equation's −4, and are flat with STC at
-> n = 4; the phosphor holds its two-term decay to 2 × 10⁻⁷. Eleven models that are wrong on purpose are
+> n = 4; the phosphor holds its two-term decay to 2 × 10⁻⁷. Twenty models that are wrong on purpose are
 > each shown to fail their check, and one-character mutations of the shipped shaders are caught.
-> All 43 parameters over both plugins are shown to change the picture. **The checks verify the
+> All 65 parameters over both plugins are shown to change the picture. **The checks verify the
 > stated model, not a real radar**: the phosphor's time constants are stretched to video rates on
 > purpose, and the synthetic sea is made to look right, not measured (see Known limits).
 > It's **never been loaded into Resolume on macOS**; the one host it's run in there is the
 > fleet's own test host, `oxbow`, for 120 frames each.
-> On Windows both plugins have been loaded. A build of this source (the DLLs release.yml built
+> **The Sprites group is new since v0.1.0 and isn't in a release yet.** It's measured by the same
+> harness (what a file becomes, the threshold, the count, size and orientation off the painted
+> picture, the speed off the phosphor, the beam revealing them and the phosphor letting them go, the
+> same frame twice) and runs in the browser demo, but it has **never been loaded into Resolume**, on
+> macOS or on Windows.
+> On Windows both plugins have been loaded (v0.1.0, before the sprites). A build of this source (the DLLs release.yml built
 > from the registered tree) loads, registers and renders in Resolume Arena 7.27.1 on software
 > rendering (win-lab, Mesa llvmpipe, no GPU, no sound device), with every control matching what
 > the plugins declare (29 and 27 host controls) and Arena's log clean, in the fleet's Arena gate:
@@ -103,6 +108,8 @@ touches none of it.
 5. Change **Range**: the coast zooms, the contacts stay (see *Contacts live on the scope* below).
 6. For your own footage: put **SW Radar Over** on a clip. The clip's bright parts become echoes.
    Bring **Mix** down to see the clip under its own echoes.
+7. For contacts of your own: raise **Sprite Count**, then choose a PNG in **Sprite File** (see *The
+   Sprites group* below). Without a file they're radar blips.
 
 ---
 
@@ -212,6 +219,89 @@ frame (0) to a circle covering the whole frame (1). At 1 the bearing scale is ou
 **Mix** (the Over only, 0 to 1, default 1). The clip under the scope. At 1 the output is opaque
 whatever the clip's alpha; at 0 the clip is returned exactly, alpha and all.
 
+## The Sprites group: your own contacts
+
+New since v0.1.0, from a request on GitHub ([radar#5](https://github.com/stoatworks-labs/radar/issues/5)):
+a picture of your own as the contacts, coming in from the edge of the scope to the centre. Both
+plugins have it.
+
+![SW Radar with ten alien sprites closing on the centre, each leaving fading copies of itself along its track, the sweep just past east-north-east](sprites.png)
+
+*SW Radar at its defaults with Sprite Count 10, Sprite Size 0.14 and the alien from the
+repository's `tools/fixtures/`, rendered by the offline harness rather than captured from Resolume.*
+
+The sprites aren't drawn on top of the scope. Each one is a target the radar sees: the sweep paints
+it as it passes, the beam smears it sideways and the pulse outward, the same as the coast, and it
+fades on the phosphor until the sweep comes round again. Between paints it moves on, so every sprite
+leaves a trail of fading copies of itself, the way a ship leaves the plot of its track. Like the
+coast, a sprite near the centre is brighter when STC is low (the radar equation), and the Gain moves
+it with everything else. Sprites don't hide behind land and land doesn't hide behind them: they're
+contacts, like the source's ships.
+
+They're **off by default** (Sprite Count 0), so a composition saved with v0.1.0 looks the same.
+
+**Sprite File** (a PNG or JPG; empty is the built-in blip). The picture. With no file, or one that
+can't be read (missing, not a picture, more than 8192 pixels on a side), you get a radar blip, and
+the reason goes in the log (see *If it looks wrong*). The file is read once, when you choose it: if
+you change the file on disk, choose it again.
+
+**Sprite Threshold** (0 to 1, default 0.5). The picture's alpha over this is the target. A picture
+with no transparency (a JPG, or a PNG with none) is read by its **brightest channel** instead, as the
+Over reads its clip: light shapes on dark. On the built-in blip, Threshold sets its size: a disc
+Sprite Size × (1 − Threshold) across.
+
+**Sprite Count** (0 to 32, default 0). How many at once. When one reaches the centre it's gone, and
+a new one starts at the rim on a new bearing. When you turn them on they start spread out along the
+way in, so the scope fills at once rather than with a ring at the edge.
+
+**Sprite Size** (0.02 to 0.5 of the scope's radius, default 0.1: about 50 pixels on a 1080p scope).
+The picture's longer side. Like the source's contacts it's in scope units, so Range zooms the coast
+and leaves the sprites alone.
+
+**Sprite Speed** (0, then 0.004 to 0.5 of the radius a second; default 0.04, which is 25 seconds
+from the rim to the centre). 0 holds them still.
+
+**Speed Spread** (0 to 1, default 0.35). At 0 they all come in at Sprite Speed. At 1 each one has
+its own, from a third of it to three times it, drawn afresh each time one starts at the rim.
+
+**Stability** (0 to 1, default 0.75). At 1 each one comes straight in at a steady speed. Lower, and
+its speed surges and sags (between 0.1 and 1.9 times its own at 0) and it weaves from side to side,
+up to 20 degrees of bearing. Speed, Speed Spread and Stability change how fast the sprites are
+going, never where they are, so moving a slider never makes them jump.
+
+**Orientation** (*Upright*, *Face Centre*). *Upright*: every sprite the right way up on the screen.
+*Face Centre*: its bottom towards the centre of the scope, like figures standing on a globe.
+
+**Hue** (0 to 1, default 0) and **Saturation** (0 to 1, default 0.5). The sprites glow in the
+phosphor's colours, so on P7 they flash blue-white and fade to yellow-green like everything else.
+Hue turns both colours round the colour wheel (0.33 is a third of the way round); Saturation scales
+how coloured they are: 0 is grey, 0.5 the phosphor's own, 1 twice as strong. At Hue 0 and Saturation
+0.5 a sprite is exactly the colour of every other echo. *I chose to start from the phosphor rather
+than from a colour you pick, so the sprites still look like they're on the same tube.*
+
+**Grow On Approach** (0 to 1, default 0). At 0 they're the same size all the way in. At 1 a sprite
+is four times Sprite Size by the time it reaches the centre, growing steadily on the way.
+
+### Making a good sprite
+
+- **A PNG with transparency.** The radar sees a silhouette: the shape where the alpha is over Sprite
+  Threshold. The colours inside the shape are ignored; Hue and Saturation colour it instead.
+- **Holes count.** Make eyes, mouths and gaps transparent if you want them to show. The alien in the
+  repository's `tools/fixtures/` has its eyes cut out; the panda's eye patches are opaque, so it's
+  a silhouette with ears.
+- **Bold and simple.** The beam smears every sprite sideways by Beamwidth and outward by the pulse,
+  so thin lines and small details vanish, more so towards the edge where the beam is wider. A
+  chunky silhouette survives; a detailed illustration becomes a blob. Lower Beamwidth and Pulse
+  Length to sharpen them.
+- **Small is fine.** The plugin reduces any picture to 128 pixels on its longer side, so a 128 × 128
+  PNG is plenty.
+- **No transparency? Light on dark.** A JPG is read by its brightest channel, so a white skull on
+  black works and a black skull on white gives you a white square with a skull-shaped hole. Raise
+  Sprite Threshold to drop a grey background.
+- **Emoji:** save it as a PNG with a transparent background (most emoji sites and design tools will
+  do that). A screenshot of one comes with an opaque background and reads as a square.
+- **Square pictures read best.** A wide picture is drawn wide; Sprite Size is its longer side.
+
 ---
 
 ## SW Radar Over: your clip is the sea
@@ -254,6 +344,11 @@ picture's sake.*
 - **The phosphor** is two components per texel, a flash and an afterglow. Each texel stores its
   value at its bearing's last paint, and the decay since then is computed exactly on the CPU for
   every bearing and applied when the scope is drawn, so it is exact at any frame count.
+- **Sprites** are reflectivity, like the coast: each frame the CPU moves them (in double precision,
+  from the host's clock, so the same clock gives the same frame), and the pass that resamples the
+  surface into range and bearing samples each sprite's picture there too, averaged over the pulse;
+  the paint convolves it with the beam. The phosphor keeps the sprites' share of every echo beside
+  the whole, decaying the same way, which is what lets Hue and Saturation colour them alone.
 - **No sin, cos or atan** in the shaders: GLSL doesn't bound their error, and a software renderer's
   sine made a beam 3% too wide. The shaders use their own, built from bounded operations.
 
@@ -264,7 +359,14 @@ picture's sake.*
 At the defaults, on an Apple M4 Max shared with other builds, the median frame is **0.34 ms at
 720p, 0.39 at 1080p and 0.74 at 4K** for SW Radar, and **0.28, 0.43 and 1.17 ms** for SW Radar
 Over: a few percent of a 60 fps frame. The GPU paints only the wedge the antenna swept; the grid
-is fixed at 2048 × 1024 whatever the output size.
+is fixed at 2048 × 1024 whatever the output size. Sixteen sprites cost nothing the same benchmark
+could measure on that GPU (each one is only worked on where the beam can reach it). On a software
+renderer they're dearer: about an eighth of a second a frame more for twelve big ones at 320 × 180
+on Apple's.
+
+Since the sprites the phosphor has four 32-bit channels per texel instead of two (the sprites'
+share sits beside the whole), so each instance holds more GPU memory for its buffers: about 88 MB
+for SW Radar and 80 MB for SW Radar Over, where v0.1.0 held 48 and 40.
 
 ---
 
@@ -283,6 +385,17 @@ land hides what is behind it and the sea returns little.
 **I can't see the rain.** Lower Land, raise Gain, and raise Rain.
 
 **The spokes stand still.** A regular beat at a rotation that divides it (see the Audio group).
+
+**No sprites.** Sprite Count is 0 by default; raise it.
+
+**My sprite is a radar blip.** No file is chosen, or the file couldn't be read: the log says which
+file and why ("cannot be opened", "will not decode"). Choose it again once it's fixed.
+
+**My sprite is a square.** The picture has no transparency, and its background is bright: it's read
+by its brightest channel. Save it with a transparent background, or put it light on black.
+
+**My sprite is a blob.** It's too detailed for the beam: see *Making a good sprite*, or lower
+Beamwidth and Pulse Length.
 
 **Old echoes linger after a change.** The phosphor keeps what it was painted until the sweep comes
 round, and with a long Persistence for longer.
@@ -330,6 +443,13 @@ It records the GL vendor, renderer and version at load, and which shader failed 
   Clutter's R⁻³ and rain's R⁻² follow from the resolution cell's area and volume.
 - **No sector scan**: Direction is clockwise or anticlockwise, never back and forth over an arc.
 - **Ships and aircraft share one speed range**, in scope units.
+- **Sprites are silhouettes.** The radar sees a shape, not a picture: the colours of your file are
+  thrown away, and Hue and Saturation colour every sprite alike. All sprites share one picture.
+- **Sprites only come in.** They start at the rim and end at the centre; there's no going out, no
+  crossing, no paths of your own.
+- **The sprites have never been in Resolume.** The file parameter's dialog, a path with accents or
+  emoji in it on Windows (widened to UTF-16 for Windows' file API, checked in the harness on macOS
+  only), and how the eleven new controls present in Arena are all untested in a host.
 - **Never loaded into Resolume on macOS.** Everything numeric was compiled, rendered and measured
   offline against the real plugin classes in a headless GL context, plus an `oxbow` load. No real
   audio has reached it in a host: the audio controls were checked with a synthetic spectrum only.

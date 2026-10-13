@@ -46,9 +46,17 @@ constexpr double kWindowGaussian = 3.0, kWindowSidelobes = 8.0;
 constexpr int kMaxTaps           = 128;
 /// km of land the beam passes through for its return to fall by e.
 constexpr double kShadowKm = 1.5;
+/// A sprite's reflectivity, against the synthetic coast's 0.25 to 1: as
+/// bright as the brightest coast, so at the defaults a sprite reads like land
+/// at any range, and Gain and STC treat it exactly as they treat land.
+constexpr float kSpriteLevel = 1.0f;
+/// Grow On Approach at 1: a sprite at the centre is this many times its size
+/// at the rim, linearly in between.
+constexpr double kSpriteGrowth = 3.0;
 
-const char* const kDirectionNames[] = { "Clockwise", "Anticlockwise" };
-const char* const kPhosphorNames[]  = { "P7", "P19", "Green" };
+const char* const kDirectionNames[]   = { "Clockwise", "Anticlockwise" };
+const char* const kPhosphorNames[]    = { "P7", "P19", "Green" };
+const char* const kOrientationNames[] = { "Upright", "Face Centre" };
 
 /// The y where sinc^4( y ) = 1/2: sinc( y ) = 2^-1/4. Newton, once.
 double sincHalfPower()
@@ -94,6 +102,17 @@ const char* nameOf( unsigned int id )
 	case PT_HEADING_LINE: return "Heading Line";
 	case PT_SCOPE_SIZE: return "Scope Size";
 	case PT_MIX: return "Mix";
+	case PT_SPRITE_FILE: return "Sprite File";
+	case PT_SPRITE_THRESHOLD: return "Sprite Threshold";
+	case PT_SPRITE_COUNT: return "Sprite Count";
+	case PT_SPRITE_SIZE: return "Sprite Size";
+	case PT_SPRITE_SPEED: return "Sprite Speed";
+	case PT_SPEED_SPREAD: return "Speed Spread";
+	case PT_STABILITY: return "Stability";
+	case PT_ORIENTATION: return "Orientation";
+	case PT_SPRITE_HUE: return "Hue";
+	case PT_SPRITE_SATURATION: return "Saturation";
+	case PT_SPRITE_GROW: return "Grow On Approach";
 	default: return "?";
 	}
 }
@@ -125,6 +144,25 @@ const PhosphorLook& lookOf( Phosphor p )
 		{ { 0.60f, 1.60f, 0.70f }, { 0.20f, 1.20f, 0.30f }, { 0.12f, 0.45f, 0.16f }, { 0.002f, 0.010f, 0.004f } },
 	};
 	return looks[ static_cast< int >( p ) ];
+}
+
+/// The sprites' colour: the phosphor's, turned about the grey axis by Hue
+/// (Rodrigues, so the mean of the three channels is kept) and its chroma
+/// scaled by 2 x Saturation about that mean (0.5 keeps it). So the phosphor
+/// still tints a sprite -- P7's two-tone flash and afterglow stay two-tone --
+/// and Hue and Saturation move it from there.
+void tintOf( const float in[ 3 ], double hueTurns, double saturation, float out[ 3 ] )
+{
+	const double a = 2.0 * kPi * hueTurns, c = std::cos( a ), s = std::sin( a );
+	const double k    = 1.0 / std::sqrt( 3.0 );
+	const double v[ 3 ] = { in[ 0 ], in[ 1 ], in[ 2 ] };
+	const double mean = ( v[ 0 ] + v[ 1 ] + v[ 2 ] ) / 3.0;
+	const double cross[ 3 ] = { k * ( v[ 2 ] - v[ 1 ] ), k * ( v[ 0 ] - v[ 2 ] ), k * ( v[ 1 ] - v[ 0 ] ) };
+	for( int i = 0; i < 3; ++i )
+	{
+		const double turned = v[ i ] * c + cross[ i ] * s + mean * ( 1.0 - c );
+		out[ i ]            = static_cast< float >( std::max( 0.0, mean + ( turned - mean ) * 2.0 * saturation ) );
+	}
 }
 } // namespace
 
@@ -174,6 +212,19 @@ RadarPlugin::RadarPlugin( bool effect ) :
 	params[ PT_HEADING_LINE ]   = isEffect ? 0.0f : 1.0f;
 	params[ PT_SCOPE_SIZE ]     = isEffect ? 1.0f : 0.0f;
 	params[ PT_MIX ]            = 1.0f;
+	//Sprites (radar#5): OFF by default, so a composition saved with v0.1.0
+	//(which stores only what differs from the defaults) looks as it did.
+	params[ PT_SPRITE_FILE ]       = 0.0f;
+	params[ PT_SPRITE_THRESHOLD ]  = 0.5f;
+	params[ PT_SPRITE_COUNT ]      = 0.0f;
+	params[ PT_SPRITE_SIZE ]       = ParamFromSpriteSize( 0.1 );
+	params[ PT_SPRITE_SPEED ]      = ParamFromSpriteSpeed( 0.04 );
+	params[ PT_SPEED_SPREAD ]      = 0.35f;
+	params[ PT_STABILITY ]         = 0.75f;
+	params[ PT_ORIENTATION ]       = static_cast< float >( Orientation::Upright );
+	params[ PT_SPRITE_HUE ]        = 0.0f;
+	params[ PT_SPRITE_SATURATION ] = 0.5f;
+	params[ PT_SPRITE_GROW ]       = 0.0f;
 
 	for( unsigned int host = 0; host < hostOrder.size(); ++host )
 	{
@@ -190,6 +241,20 @@ RadarPlugin::RadarPlugin( bool effect ) :
 			SetOptionParamInfo( host, name, 3, params[ id ] );
 			for( int i = 0; i < 3; ++i )
 				SetParamElementInfo( host, static_cast< unsigned int >( i ), kPhosphorNames[ i ], static_cast< float >( i ) );
+			break;
+		case PT_ORIENTATION:
+			SetOptionParamInfo( host, name, 2, params[ id ] );
+			for( int i = 0; i < 2; ++i )
+				SetParamElementInfo( host, static_cast< unsigned int >( i ), kOrientationNames[ i ], static_cast< float >( i ) );
+			break;
+		case PT_SPRITE_FILE:
+			//SetFileParamInfo ONLY: it pushes its own entry, and a SetParamInfo
+			//for the same index registers it twice (gridiron's trap).
+			SetFileParamInfo( host, name, { "png", "jpg", "jpeg" }, "" );
+			break;
+		case PT_SPRITE_COUNT:
+			SetParamInfo( host, name, FF_TYPE_INTEGER, params[ id ] );
+			SetParamRange( host, 0.0f, static_cast< float >( kMaxSprites ) );
 			break;
 		case PT_CONTACTS:
 			//Only FF_TYPE_STANDARD has its default clamped into 0..1, so an
@@ -273,9 +338,13 @@ bool RadarPlugin::ensureBuffers()
 	//All 32-bit float: a paint carries the last one's value forward through a
 	//decay that can be within 1e-3 of 1, which half floats cannot represent
 	//the distance from. Read texel by texel; the composite interpolates.
-	bool ok = phosphor.Ensure( kBearings, kRanges, GL_RG32F, PassBuffer::Sampling::Nearest, PassBuffer::Wrap::Repeat );
-	ok      = ok && scratch.Ensure( kBearings, kRanges, GL_RG32F, PassBuffer::Sampling::Nearest, PassBuffer::Wrap::Repeat );
-	ok = ok && reflect.Ensure( kBearings, kRanges, GL_R32F, PassBuffer::Sampling::Nearest, PassBuffer::Wrap::Repeat );
+	//
+	//Four components since radar#5: (flash, afterglow) of everything, then of
+	//the sprites' share, so the composite can colour the sprites. The reflect
+	//band carries (surface, sprites).
+	bool ok = phosphor.Ensure( kBearings, kRanges, GL_RGBA32F, PassBuffer::Sampling::Nearest, PassBuffer::Wrap::Repeat );
+	ok      = ok && scratch.Ensure( kBearings, kRanges, GL_RGBA32F, PassBuffer::Sampling::Nearest, PassBuffer::Wrap::Repeat );
+	ok = ok && reflect.Ensure( kBearings, kRanges, GL_RG32F, PassBuffer::Sampling::Nearest, PassBuffer::Wrap::Repeat );
 	ok = ok && kernel.Ensure( kBearings + 1, 1, GL_R32F, PassBuffer::Sampling::Nearest );
 	if( !isEffect )
 		ok = ok && map.Ensure( kMapSize, kMapSize, GL_RG32F, PassBuffer::Sampling::Linear );
@@ -291,7 +360,94 @@ bool RadarPlugin::ensureBuffers()
 			glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
 			glBindTexture( GL_TEXTURE_2D, 0 );
 		}
-	return ok && fadeTexture != 0 && carryTexture != 0;
+	if( spriteTexture == 0 )
+	{
+		glGenTextures( 1, &spriteTexture );
+		spriteTextureStale = true;
+	}
+	return ok && fadeTexture != 0 && carryTexture != 0 && spriteTexture != 0;
+}
+
+std::string RadarPlugin::spritePathNow()
+{
+	std::lock_guard< std::mutex > lock( spritePathMutex );
+	return spritePath;
+}
+
+void RadarPlugin::updateSprite()
+{
+	const std::string path = spritePathNow();
+	if( !spriteEverLoaded || path != spriteLoadedPath )
+	{
+		spriteEverLoaded = true;
+		spriteLoadedPath = path;
+		if( path.empty() )
+		{
+			spriteMask   = sprite::BuiltIn();
+			spriteSource = SpriteSource::BuiltIn;
+			spriteWhy.clear();
+		}
+		else
+		{
+			const sprite::Loaded loaded = sprite::LoadFile( path );
+			if( loaded.ok )
+			{
+				spriteMask   = loaded.mask;
+				spriteSource = SpriteSource::File;
+				spriteWhy.clear();
+				diag::info( "sprite file \"" + path + "\": " + std::to_string( loaded.sourceWidth ) + "x"
+				            + std::to_string( loaded.sourceHeight ) + ", " + std::to_string( loaded.sourceChannels )
+				            + " channels, mask " + std::to_string( spriteMask.width ) + "x" + std::to_string( spriteMask.height )
+				            + " from its " + ( spriteMask.fromAlpha ? "alpha" : "brightest channel (no transparency)" ) );
+			}
+			else
+			{
+				//The path verbatim and quoted: a trailing space or a separator
+				//the host rewrote survives a glance and not a log.
+				diag::warn( "sprite file \"" + path + "\" " + loaded.why + " - using the built-in blip" );
+				FFGLLog::LogToHost( "Radar: the sprite file could not be loaded, using the built-in blip (see the log)" );
+				if( !spriteKeepLastForTest )
+					spriteMask = sprite::BuiltIn();
+				spriteSource = SpriteSource::Fallback;
+				spriteWhy    = loaded.why;
+			}
+		}
+		spriteTextureStale = true;
+	}
+	if( spriteTextureStale && spriteTexture != 0 )
+		uploadSpriteMask();
+}
+
+void RadarPlugin::uploadSpriteMask()
+{
+	//The host's unpack state is its own: a bound unpack buffer would make this
+	//read from it, and a row length or skip would shear the picture.
+	GLint alignment = 4, rowLength = 0, skipRows = 0, skipPixels = 0, unpackBuffer = 0;
+	glGetIntegerv( GL_UNPACK_ALIGNMENT, &alignment );
+	glGetIntegerv( GL_UNPACK_ROW_LENGTH, &rowLength );
+	glGetIntegerv( GL_UNPACK_SKIP_ROWS, &skipRows );
+	glGetIntegerv( GL_UNPACK_SKIP_PIXELS, &skipPixels );
+	glGetIntegerv( GL_PIXEL_UNPACK_BUFFER_BINDING, &unpackBuffer );
+	glBindBuffer( GL_PIXEL_UNPACK_BUFFER, 0 );
+	glPixelStorei( GL_UNPACK_ALIGNMENT, 4 );
+	glPixelStorei( GL_UNPACK_ROW_LENGTH, 0 );
+	glPixelStorei( GL_UNPACK_SKIP_ROWS, 0 );
+	glPixelStorei( GL_UNPACK_SKIP_PIXELS, 0 );
+
+	glBindTexture( GL_TEXTURE_2D, spriteTexture );
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_R32F, spriteMask.width, spriteMask.height, 0, GL_RED, GL_FLOAT, spriteMask.value.data() );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+	glBindTexture( GL_TEXTURE_2D, 0 );
+
+	glPixelStorei( GL_UNPACK_ALIGNMENT, alignment );
+	glPixelStorei( GL_UNPACK_ROW_LENGTH, rowLength );
+	glPixelStorei( GL_UNPACK_SKIP_ROWS, skipRows );
+	glPixelStorei( GL_UNPACK_SKIP_PIXELS, skipPixels );
+	glBindBuffer( GL_PIXEL_UNPACK_BUFFER, static_cast< GLuint >( unpackBuffer ) );
+	spriteTextureStale = false;
 }
 
 void RadarPlugin::buildMap()
@@ -458,6 +614,20 @@ FFResult RadarPlugin::ProcessOpenGL( ProcessOpenGLStruct* pgl )
 	                                             : ( isEffect ? std::vector< world::Target >() : sea.Targets() );
 
 	//-------------------------------------------------------------------
+	// The sprites (radar#5), both plugins: in from the rim on the host's
+	// clock. Placed below, once the mask (and so its aspect) is current.
+	//-------------------------------------------------------------------
+	{
+		swarm::Settings settings;
+		settings.count     = std::clamp( static_cast< int >( std::lround( params[ PT_SPRITE_COUNT ] ) ), 0, kMaxSprites );
+		settings.seed      = spriteWallSeedForTest ? seed ^ static_cast< uint32_t >( wallSeconds() * 1.0e6 ) : seed;
+		settings.speed     = SpriteSpeedFromParam( params[ PT_SPRITE_SPEED ] );
+		settings.spread    = SpeedSpreadFromParam( params[ PT_SPEED_SPREAD ] );
+		settings.stability = StabilityFromParam( params[ PT_STABILITY ] );
+		swarm.Step( dt, settings );
+	}
+
+	//-------------------------------------------------------------------
 	// The scope on the screen.
 	//-------------------------------------------------------------------
 	{
@@ -482,6 +652,34 @@ FFResult RadarPlugin::ProcessOpenGL( ProcessOpenGLStruct* pgl )
 	lastHeight = height;
 	if( !isEffect )
 		buildMap();
+	updateSprite();
+	{
+		const double size      = SpriteSizeFromParam( params[ PT_SPRITE_SIZE ] );
+		const double grow      = SpriteGrowFromParam( params[ PT_SPRITE_GROW ] );
+		const bool faceCentre  = !spriteOrientationIgnoredForTest
+		                        && OptionIndex( params[ PT_ORIENTATION ], static_cast< int >( Orientation::Count ) )
+		                               == static_cast< int >( Orientation::FaceCentre );
+		const double longer    = std::max( 1, std::max( spriteMask.width, spriteMask.height ) );
+		const double aspectX   = spriteMask.width / longer, aspectY = spriteMask.height / longer;
+		spriteDraws.clear();
+		for( const swarm::Placed& placed : swarm.Sprites() )
+		{
+			const double side = size * ( 1.0 + kSpriteGrowth * grow * ( 1.0 - std::clamp( placed.range, 0.0, 1.0 ) ) );
+			SpriteDraw d;
+			d.x       = placed.x;
+			d.y       = placed.y;
+			d.hx      = 0.5 * side * aspectX;
+			d.hy      = 0.5 * side * aspectY;
+			//Face Centre: the sprite's up is its bearing, so its bottom faces
+			//the centre whichever way it comes in.
+			d.upSin   = faceCentre ? std::sin( placed.bearing ) : 0.0;
+			d.upCos   = faceCentre ? std::cos( placed.bearing ) : 1.0;
+			d.range   = placed.range;
+			d.bearing    = placed.bearing;
+			d.generation = placed.generation;
+			spriteDraws.push_back( d );
+		}
+	}
 
 	const double rangeKm     = RangeFromParam( params[ PT_RANGE ] );
 	const double pulseExtent = pulseFactor * 2.0 * kMetresPerMicrosecond * PulseFromParam( params[ PT_PULSE ] ) / 1000.0 / rangeKm;
@@ -516,7 +714,55 @@ FFResult RadarPlugin::ProcessOpenGL( ProcessOpenGLStruct* pgl )
 	// all: nothing to resample.
 	//-------------------------------------------------------------------
 	const bool surfaceOn = isEffect ? ThresholdFromParam( params[ PT_THRESHOLD ] ) < 1.0 : LandFromParam( params[ PT_LAND ] ) > 0.0;
-	if( wedge.count > 0 && surfaceOn )
+	//The sprites the beam can reach from this wedge: the band's bearings
+	//against each sprite's bounding circle, so the shader loops over the one
+	//or two in reach, not all of them.
+	float spriteBox[ kMaxSprites * 4 ]   = {};
+	float spriteTurn[ kMaxSprites * 4 ]  = {};
+	float spriteReach[ kMaxSprites * 4 ] = {};
+	spritesInBand                       = 0;
+	if( wedge.count > 0 )
+	{
+		const int total      = wedge.count + 2 * window;
+		const double bandMid = static_cast< double >( wedge.first - window ) + 0.5 * ( total - 1 );
+		for( const SpriteDraw& d : spriteDraws )
+		{
+			if( spritesInBand >= kMaxSprites )
+				break;
+			const double rho = std::sqrt( d.hx * d.hx + d.hy * d.hy );
+			if( d.range - rho >= 1.0 )
+				continue;
+			//The half-angle its bounding circle subtends from the centre, or
+			//all the way round when the circle covers the centre.
+			const double halfAngle = d.range <= rho ? kPi : std::asin( rho / d.range );
+			bool reach             = total >= kBearings || d.range <= rho;
+			if( !reach )
+			{
+				const double halfBins = halfAngle / binAngle;
+				const double centre   = d.bearing / binAngle - 0.5;
+				reach                 = std::fabs( std::remainder( centre - bandMid, static_cast< double >( kBearings ) ) )
+				        <= 0.5 * ( total - 1 ) + halfBins + 1.0;
+			}
+			if( !reach )
+				continue;
+			float* box = &spriteBox[ spritesInBand * 4 ];
+			box[ 0 ]   = static_cast< float >( d.x );
+			box[ 1 ]   = static_cast< float >( d.y );
+			box[ 2 ]   = static_cast< float >( d.hx );
+			box[ 3 ]   = static_cast< float >( d.hy );
+			spriteTurn[ spritesInBand * 4 + 0 ] = static_cast< float >( d.upSin );
+			spriteTurn[ spritesInBand * 4 + 1 ] = static_cast< float >( d.upCos );
+			//For the shader's per-texel test, a hair wider than the circle so
+			//float rounding never cuts a sprite's edge.
+			spriteReach[ spritesInBand * 4 + 0 ] = static_cast< float >( d.range );
+			spriteReach[ spritesInBand * 4 + 1 ] = static_cast< float >( rho * 1.001 + 1e-5 );
+			spriteReach[ spritesInBand * 4 + 2 ] = static_cast< float >( d.bearing );
+			spriteReach[ spritesInBand * 4 + 3 ] = static_cast< float >( std::min( kPi, halfAngle * 1.001 + 1e-5 ) );
+			++spritesInBand;
+		}
+	}
+	const bool reflectOn = surfaceOn || spritesInBand > 0;
+	if( wedge.count > 0 && reflectOn )
 	{
 		ScopedFBOBinding fbo( reflect.GetGLID(), ScopedFBOBinding::RB_REVERT );
 		ScopedShaderBinding shader( reflectShader.GetGLID() );
@@ -539,6 +785,15 @@ FFResult RadarPlugin::ProcessOpenGL( ProcessOpenGLStruct* pgl )
 			reflectShader.Set( "MaxUV", 1.0f, 1.0f );
 		reflectShader.Set( "Threshold", static_cast< float >( ThresholdFromParam( params[ PT_THRESHOLD ] ) ) );
 		reflectShader.Set( "ShadowScale", static_cast< float >( rangeKm / kShadowKm ) );
+		reflectShader.Set( "SurfaceOn", surfaceOn ? 1 : 0 );
+		bindUnit( 1, spriteTexture );
+		reflectShader.Set( "SpriteMask", 1 );
+		reflectShader.Set( "SpriteCount", spritesInBand );
+		glUniform4fv( glGetUniformLocation( reflectShader.GetGLID(), "SpriteBox" ), kMaxSprites, spriteBox );
+		glUniform4fv( glGetUniformLocation( reflectShader.GetGLID(), "SpriteTurn" ), kMaxSprites, spriteTurn );
+		glUniform4fv( glGetUniformLocation( reflectShader.GetGLID(), "SpriteReach" ), kMaxSprites, spriteReach );
+		reflectShader.Set( "SpriteThreshold",
+		                   spriteThresholdIgnoredForTest ? 0.0f : static_cast< float >( SpriteThresholdFromParam( params[ PT_SPRITE_THRESHOLD ] ) ) );
 
 		const int total = wedge.count + 2 * window;
 		if( total >= kBearings )
@@ -558,7 +813,7 @@ FFResult RadarPlugin::ProcessOpenGL( ProcessOpenGLStruct* pgl )
 				quad.Draw();
 			}
 		}
-		unbindTextureUnits( 1 );
+		unbindTextureUnits( 2 );
 	}
 
 	//-------------------------------------------------------------------
@@ -624,7 +879,8 @@ FFResult RadarPlugin::ProcessOpenGL( ProcessOpenGLStruct* pgl )
 			paintShader.Set( "Carry", 2 );
 			paintShader.Set( "Kernel", 3 );
 			paintShader.Set( "KernelHalf", kBearings / 2 );
-			paintShader.Set( "SurfaceOn", surfaceOn ? 1 : 0 );
+			paintShader.Set( "SurfaceOn", reflectOn ? 1 : 0 );
+			paintShader.Set( "SpriteLevel", kSpriteLevel );
 			paintShader.Set( "Bearings", kBearings );
 			paintShader.Set( "Ranges", kRanges );
 			paintShader.Set( "FirstCol", start );
@@ -697,6 +953,8 @@ FFResult RadarPlugin::ProcessOpenGL( ProcessOpenGLStruct* pgl )
 		compositeShader.Set( "Bearings", kBearings );
 		compositeShader.Set( "Ranges", kRanges );
 		compositeShader.Set( "PolarViewForTest", polarView ? 1 : 0 );
+		compositeShader.Set( "PolarSpritesForTest", polarSprites ? 1 : 0 );
+		compositeShader.Set( "SpriteNoFadeForTest", spriteNoFadeForTest ? 1 : 0 );
 		glUniform2i( glGetUniformLocation( compositeShader.GetGLID(), "PolarOrigin" ), polarOrigin[ 0 ], polarOrigin[ 1 ] );
 		compositeShader.Set( "Raster", static_cast< float >( width ), static_cast< float >( height ) );
 		compositeShader.Set( "ViewOrigin", static_cast< float >( hostViewport[ 0 ] ), static_cast< float >( hostViewport[ 1 ] ) );
@@ -713,6 +971,24 @@ FFResult RadarPlugin::ProcessOpenGL( ProcessOpenGLStruct* pgl )
 		compositeShader.Set( "AfterColour", look.after[ 0 ], look.after[ 1 ], look.after[ 2 ] );
 		compositeShader.Set( "OverlayColour", look.overlay[ 0 ], look.overlay[ 1 ], look.overlay[ 2 ] );
 		compositeShader.Set( "FaceColour", look.face[ 0 ], look.face[ 1 ], look.face[ 2 ] );
+		{
+			//Hue 0 (or a whole turn) and Saturation 0.5 are the phosphor's own
+			//colours, and then the composite does not touch the share at all.
+			const double hue        = SpriteHueFromParam( params[ PT_SPRITE_HUE ] );
+			const double saturation = SpriteSaturationFromParam( params[ PT_SPRITE_SATURATION ] );
+			const bool tint         = ( hue > 0.0 && hue < 1.0 ) || saturation != 0.5;
+			float flash[ 3 ] = { look.flash[ 0 ], look.flash[ 1 ], look.flash[ 2 ] };
+			float after[ 3 ] = { look.after[ 0 ], look.after[ 1 ], look.after[ 2 ] };
+			if( tint )
+			{
+				const double turn = spriteHueBackwardsForTest ? -hue : hue;
+				tintOf( look.flash, turn, saturation, flash );
+				tintOf( look.after, turn, saturation, after );
+			}
+			compositeShader.Set( "SpriteTint", tint ? 1 : 0 );
+			compositeShader.Set( "SpriteFlashColour", flash[ 0 ], flash[ 1 ], flash[ 2 ] );
+			compositeShader.Set( "SpriteAfterColour", after[ 0 ], after[ 1 ], after[ 2 ] );
+		}
 		compositeShader.Set( "RingSpacing", static_cast< float >( ringSpacingKm( rangeKm ) / rangeKm ) );
 		compositeShader.Set( "RingLevel", std::clamp( params[ PT_RINGS ], 0.0f, 1.0f ) );
 		compositeShader.Set( "MarkLevel", std::clamp( params[ PT_BEARING_MARKS ], 0.0f, 1.0f ) );
@@ -734,12 +1010,13 @@ FFResult RadarPlugin::DeInitGL()
 	phosphor.Destroy();
 	scratch.Destroy();
 	reflect.Destroy();
-	for( GLuint* texture : { &fadeTexture, &carryTexture } )
+	for( GLuint* texture : { &fadeTexture, &carryTexture, &spriteTexture } )
 		if( *texture )
 		{
 			glDeleteTextures( 1, texture );
 			*texture = 0;
 		}
+	spriteTextureStale = true;
 	map.Destroy();
 	mapRange = -1.0f;
 	return FF_SUCCESS;
@@ -759,6 +1036,14 @@ char* RadarPlugin::GetTextParameter( unsigned int index )
 		static const std::string text = stoatworks::about::textParam( 0 );
 		return const_cast< char* >( text.c_str() );
 	}
+	if( index < hostOrder.size() && hostOrder[ index ] == PT_SPRITE_FILE )
+	{
+		//The host keeps the pointer past this call, and the path may be
+		//replaced from another thread: hand back a copy that stays put.
+		std::lock_guard< std::mutex > lock( spritePathMutex );
+		spritePathReturn = spritePath;
+		return const_cast< char* >( spritePathReturn.c_str() );
+	}
 	return CFFGLPlugin::GetTextParameter( index );
 }
 
@@ -766,6 +1051,15 @@ FFResult RadarPlugin::SetTextParameter( unsigned int index, const char* value )
 {
 	if( index < hostOrder.size() && hostOrder[ index ] == PT_ABOUT_TEXT )
 		return FF_SUCCESS;
+	//The host pushes the empty default through here on every new instance; a
+	//failure would be the plugin refusing to load. The file is read later,
+	//on the render thread (updateSprite), never here.
+	if( index < hostOrder.size() && hostOrder[ index ] == PT_SPRITE_FILE )
+	{
+		std::lock_guard< std::mutex > lock( spritePathMutex );
+		spritePath = value != nullptr ? value : "";
+		return FF_SUCCESS;
+	}
 	return CFFGLPlugin::SetTextParameter( index, value );
 }
 

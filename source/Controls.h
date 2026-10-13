@@ -69,6 +69,19 @@ enum ParamId : unsigned int
 	PT_SCOPE_SIZE,
 	PT_MIX,///< Over only
 
+	// -- Sprites (radar#5): an image file as contacts, both plugins ----------
+	PT_SPRITE_FILE,     ///< FF_TYPE_FILE: a PNG or JPG; empty is the built-in blip
+	PT_SPRITE_THRESHOLD,///< the image's alpha (or brightest channel) over this is the target
+	PT_SPRITE_COUNT,    ///< FF_TYPE_INTEGER 0..kMaxSprites; 0 is off (the default)
+	PT_SPRITE_SIZE,
+	PT_SPRITE_SPEED,
+	PT_SPEED_SPREAD,
+	PT_STABILITY,
+	PT_ORIENTATION,
+	PT_SPRITE_HUE,
+	PT_SPRITE_SATURATION,
+	PT_SPRITE_GROW,
+
 	// -- The Stoatworks About block: a text line, then one button per link.
 	PT_ABOUT_TEXT,
 	PT_COUNT = PT_ABOUT_TEXT + 1 + stoatworks::about::kButtonCount
@@ -88,6 +101,13 @@ enum class Direction
 	Count
 };
 
+enum class Orientation
+{
+	Upright = 0,///< every sprite's top towards the top of the screen (north)
+	FaceCentre, ///< every sprite's bottom towards the centre: its top points outward
+	Count
+};
+
 enum class Phosphor
 {
 	P7 = 0,///< blue-white flash, yellow-green afterglow: the classic PPI
@@ -104,6 +124,8 @@ constexpr int kRanges   = 1024;
 constexpr int kMapSize = 1024;
 /// At most this many point targets are painted analytically.
 constexpr int kMaxTargets = 32;
+/// At most this many sprites at once (Sprite Count's top).
+constexpr int kMaxSprites = 32;
 
 /// Metres of range per microsecond of pulse, two-way: c/2.
 constexpr double kMetresPerMicrosecond = 149.896229;
@@ -151,6 +173,30 @@ float ParamFromPersistence( double seconds );
 double FlashFromParam( float v );
 /// The flash's time constant, seconds, by phosphor.
 double FlashTauFor( Phosphor phosphor );
+
+/// Sprites. Sizes and speeds are in SCOPE units (1 = the scope's radius), like
+/// the source's contacts: Range zooms the coast and leaves the sprites alone.
+///
+/// The sprite's alpha (or brightest channel), 0..1, over which it is a target.
+double SpriteThresholdFromParam( float v );
+/// The sprite's longer side, scope radii, 0.02 to 0.5, geometric.
+double SpriteSizeFromParam( float v );
+float ParamFromSpriteSize( double radii );
+/// Scope radii per second, 0 at the bottom (they hold still), then 0.004 to
+/// 0.5 geometrically: a crossing from the rim to the centre takes 1 / this.
+double SpriteSpeedFromParam( float v );
+float ParamFromSpriteSpeed( double radiiPerSecond );
+/// 0 every sprite at Sprite Speed .. 1 each at its own, 1/3x to 3x.
+double SpeedSpreadFromParam( float v );
+/// 0 wandering (speed surging and sagging, a weave in bearing) .. 1 steady.
+double StabilityFromParam( float v );
+/// Turns of hue the phosphor's colours are rotated by for the sprites, 0..1.
+double SpriteHueFromParam( float v );
+/// The sprites' chroma against the phosphor's: 0 grey, 0.5 (the default) the
+/// phosphor's own, 1 twice it.
+double SpriteSaturationFromParam( float v );
+/// 0 the same size all the way in .. 1 four times the size at the centre.
+double SpriteGrowFromParam( float v );
 
 int OptionIndex( float value, int count );
 

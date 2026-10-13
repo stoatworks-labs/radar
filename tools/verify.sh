@@ -190,8 +190,9 @@ check_bundle "$BUILD/Radar Over.bundle" "Radar Over" "com.stoatworks.ffgl.radar.
 step "Checks (this Mac's GPU, 1280x720 and 320x180)"
 #---------------------------------------------------------------------------
 # Every claim the README makes, in the order the README makes them.
-CHECKS="arc pulse sweep persist r4 over-check prime resize clock state"
-for check in $CHECKS sweep-law cues names; do
+CHECKS="arc pulse sweep persist r4 over-check prime resize clock state
+        sprite-file sprite-threshold sprites sprite-speed sprite-beam sprite-repeat sprite-colour"
+for check in $CHECKS sweep-law cues names sprite-utf16 sprite-motion; do
 	if out=$( "$RATEST" --$check 2>&1 ); then
 		printf '   ok   ratest --%s: %s\n' "$check" "$( printf '%s\n' "$out" | grep -c '^  ok' ) checks"
 	else

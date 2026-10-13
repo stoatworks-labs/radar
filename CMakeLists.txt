@@ -65,6 +65,10 @@ add_library(radar_core OBJECT
     source/Sweep.h
     source/World.h
     source/World.cpp
+    source/Swarm.h
+    source/Swarm.cpp
+    source/SpriteImage.h
+    source/SpriteImage.cpp
     source/Audio.h
     source/Audio.cpp
     source/PassBuffer.h
@@ -77,6 +81,9 @@ add_library(radar_core OBJECT
 )
 
 target_include_directories(radar_core PUBLIC source)
+# stb_image (v2.30, the fleet's copy: shunt, flipbook, gridiron, polyhedral),
+# compiled into SpriteImage.cpp alone. PRIVATE: nothing else sees it.
+target_include_directories(radar_core PRIVATE external/stb)
 target_link_libraries(radar_core PUBLIC ffgl::sdk)
 target_compile_definitions(radar_core PUBLIC RADAR_VERSION="${PROJECT_VERSION}")
 set_target_properties(radar_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -142,6 +149,10 @@ if(RADAR_BUILD_TOOLS AND APPLE)
         "-framework OpenGL"
         "-framework AppKit"
     )
+    # The sprite fixtures (radar#5): RATEST_FIXTURES in the environment
+    # overrides it, for a harness run from a copy of the tree.
+    target_compile_definitions(ratest PRIVATE
+        RATEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tools/fixtures")
 endif()
 
 # ---------------------------------------------------------------------------

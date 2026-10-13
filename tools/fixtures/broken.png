@@ -1,0 +1,1 @@
+This is not a PNG. ratest --sprite-file loads it and must fall back to the blip.

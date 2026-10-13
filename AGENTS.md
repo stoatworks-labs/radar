@@ -133,6 +133,128 @@ three rotations). The analyser's sensitivity is fixed at the fleet default;
 the two controls are amounts, 0 = off. A clock jump (a clip trigger)
 resets the analyser, primed: the loud frame it lands on fires nothing.
 
+## Sprites (radar#5, 2026-10-13)
+
+Steve (VJPandaAU, a working VJ on Windows 11) asked for "sprites as detected
+objects": his own image as contacts closing on the centre, with a threshold, a
+count, a size, a speed, same-or-varied speeds, steady-or-wandering, upright or
+bottom-to-the-centre, hue and saturation, and optionally growth on approach.
+Built on `claude/contacts`, **not released, never loaded into any Resolume**.
+
+**A sprite is an extended target, not an overlay.** The reflect pass samples
+each sprite's mask where it resamples the surface (a second channel, G, of the
+now RG32F reflect band), averaged over the same pulse footprint; the paint
+convolves both channels with the beam, normalised, and puts the sprites under
+the same `r^(n-4)` as the surface (`P = G [ r^(n-4) (surface + sprites + ...) ...]`).
+So a sprite is painted by the sweep, smeared by the beam and the pulse exactly as
+land is, and fades on the phosphor; between paints it moves, so it leaves the
+plot of its track as fading copies. Considered and rejected: drawing the
+sprite in the composite (not a radar: no sweep, no smear, no persistence), and
+painting it analytically like the point targets (the beam convolution of an
+arbitrary picture per texel per tap is the cost the surface path already pays
+once). Sprites are not shadowed by land and cast none: they are contacts, like
+the ships (`visibility()` multiplies the surface only). Their reflectivity is 1
+(`kSpriteLevel`), the brightest coast's.
+
+**The phosphor is four components** (RGBA32F; scratch too): (flash, afterglow)
+of everything, then of the sprites' share, carried and faded alike. The share
+is the video split by the sprites' share of P, `video * min( mine / p, 1 )`, so
+it is never added twice. It exists only so the composite can recolour the
+sprites: `light += s.z ( SpriteFlash - Flash ) + s.w ( SpriteAfter - After )`,
+skipped outright (`SpriteTint 0`) at Hue 0 / Saturation 0.5. Cost: the buffers go
+from ~48 MB to ~88 MB (source; 40 -> 80 the Over). Allocating the share only
+when sprites are on would mean reallocating (and losing) the phosphor mid-show.
+
+**Colour, decided:** the sprites start from the phosphor's colours (so P7 stays
+two-tone, blue-white flash to yellow-green), Hue turns both about the grey axis
+(Rodrigues, keeps the channel mean), Saturation scales chroma about that mean
+by 2 x Saturation (0.5 = the phosphor's own). The alternative -- Hue as an
+absolute colour -- is easier to aim but makes the sprites look pasted on.
+
+**The mask:** alpha when the picture has real transparency (any alpha < 255),
+otherwise the **brightest channel** -- the brief said luma, but the Over already
+learned that luma drops saturated colours (Trinity_09's blue ring, 0.07). Hard
+threshold (`> Sprite Threshold`): a radar target is there or not, so a sprite is
+a silhouette; the bilinear mask under a step gives a smooth contour, and the
+beam and pulse antialias it. Box-filtered (area-weighted, mean-preserving) to
+at most 128 texels on the longer side, rows bottom first, R32F linear. The
+built-in blip is a 64x64 cone, so Threshold T makes it a disc Size x (1 - T)
+across: `--sprite-threshold` measures exactly that.
+
+**Loading** (`SpriteImage.cpp`, the only file that sees stb_image or a path):
+lazily on the render thread when the path changes, never in the constructor
+and never in `SetTextParameter` (which only stores the path, under a mutex, and
+must succeed for the empty default the SDK pushes at instantiation).
+`STBI_NO_STDIO`: the bytes are read by `ReadFileBytes`, which on Windows widens
+the host's UTF-8 to UTF-16 (`Utf8ToUtf16`, strict: overlong forms, surrogates,
+> U+10FFFF and truncation are refused) for `_wfopen_s`. downpour's and
+jackpot's narrow `fopen` cannot open a non-ASCII path there. A failure (missing,
+not a picture, truncated, > 8192 px, > 64 MB) logs the path verbatim and the
+reason (`diag::warn`, plus `LogToHost`) and falls back to the blip; it is not
+retried until the path changes. `SetFileParamInfo` ONLY (gridiron's trap).
+
+**Motion** (`Swarm.cpp`): every sprite heads for the centre, then a new one
+starts at the rim on a hashed bearing (PCG of seed, slot, generation; the Over
+has no Seed control and uses 11, the constructor's). Progress is integrated in
+double from the host's elapsed time, like the antenna; the wobble's distance is
+the closed-form integral of `v ( 1 + a w( t ) )`, so 24 and 240 fps put a sprite
+in the same place (`--sprite-motion`: 10^-15), and the weave in bearing is a
+function of distance travelled, so a held sprite does not sway. Speed, Speed
+Spread and Stability set rates, never positions: a slider never teleports
+them. New slots (first frame, or Count raised) start staggered by the golden
+ratio, so the scope fills at once and they never arrive in step; respawns drop
+the frame's overshoot. Seed re-hashes bearings (positions jump: deliberate).
+
+**Cost and culling.** The CPU hands the reflect pass only the sprites whose
+bounding circle the band can reach, with each one's range, radius, bearing and
+half-angle; the shader takes the pulse taps only for a texel whose footprint
+can reach a sprite. On this GPU 16 sprites are below the bench's noise. On
+Apple's software renderer, 12 big sprites cost ~0.13 s a frame at 320x180 (a
+first version that looped every sprite per tap, with a 24-float array, was
+worse; the array is gone). Note the default SOURCE costs that renderer ~0.4 s a
+frame anyway (the coast's shadow), which is why `--sprite-repeat` turns Land off.
+
+**Parameters.** A new group, **Sprites** ("Contacts" is already a control: the
+source's ships), declared in both plugins after every v0.1.0 control and before
+the About block, so no released control's host index moves (the About block's
+do; buttons). Arena stores a composition's values by name, only where they
+differ from the default (vectrix `docs/NOTES.md`, proved there), so the order is
+not what keeps a saved show working; the NAMES are, and none changed. ParamIds
+are internal (`HostOrder()` maps). Names: Sprite File, Sprite Threshold (the
+Over's "Threshold" is taken), Sprite Count, Sprite Size, Sprite Speed, Speed
+Spread, Stability, Orientation, Hue, Saturation ("Sprite Saturation" is 17
+characters), Grow On Approach (16). **Sprite Count defaults to 0**, so a v0.1.0
+composition looks exactly as it did: with Count 0 the source renders bit-for-bit
+what v0.1.0 did (compared over 600 frames and through `--pipe`); the Over
+differs in one 8-bit level at one pixel in 3 of 200 frames (the compiler
+reassociating the paint's sum), which no check's tolerance notices.
+
+**Traps hit while building it:**
+
+- A sprite over the centre of the scope paints into EVERY bearing column near
+  r = 0, so a radial profile taken down one column had two plateaus and its
+  half-maximum walked off the end. `radialExtent()` reads only within reach of
+  the sprite, and `isolated()` skips sprites another one (or the centre, or
+  the rim) can reach into.
+- At 0 dB the tube's 1 - exp( -P ) moves a beam-blurred edge's half level
+  outward (by ~0.3 of the blur per edge: 1.3 px on a 68 px square at 720p). The
+  geometry checks run at -30 dB, where the video is P.
+- `--sprite-repeat` on the default source took 300 s on the software renderer:
+  the coast, not the sprites. It runs over open water with clutter and noise.
+
+**Gate (plugin-bench) not updated** (out of scope here): `plugin-bench/arena/expect/radar.json`
+and its copy `docs/arena-expect.json` describe v0.1.0's 29 and 26 (27 host)
+parameters; the plugins now declare 40 and 37. `ratest --expect` drafts the new
+rows (Sprite File as `ParamFile`, the rest `needs` Sprite Count 10, Orientation
+an asymmetric fixture). Re-seed from a running Arena; don't hand-edit.
+
+**The demo** ports all of it (Swarm, the mask and box filter, the culling, the
+tint); Sprite File is a choice of the blip and the two fixtures (copied into
+`demo/sprites/`) plus a file button whose picture the browser decodes in place
+of stb_image and never sends anywhere. Checked once by eye in the desktop
+app's browser (source with aliens, Over with Face Centre pandas, no console
+errors), 2026-10-13.
+
 ## Decisions taken without asking
 
 - **Each plugin declares only its own controls, About block last** (`HostOrder()`
@@ -280,6 +402,15 @@ a macOS runner has no accelerated GL.
 | `--clock` antenna | 1e-6 bins | a double ulp at 4.99e8 ms is 6e-8 ms: a dt good to 1e-10 s, 600 frames of it to 6e-8 bins | raster-free |
 | `--clock` dt | 1e-9 s | the same ulp | raster-free |
 | `--state`, `--names`, `--cues` | exact | GL state; the 16-byte field; the cue law | raster-free |
+| `--sprite-threshold` | 1.5 range bins + the texture's own reconstruction error (0.04-0.16 bins, computed) | half a bin per edge (the edge is sampled at bin centres, and the 2-tap pulse average is a one-bin ramp), a quarter for the 0.5-degree beam averaging neighbouring columns' shorter chords; the bilinear cone's crossing from the harness's own model of the texture | raster-free (the phosphor) |
+| `--sprites` size, growth | 1 px on the screen; 1.5 bins on the phosphor | the bilinear read's tent and the pixel grid's phase, at both edges; as above | both rasters |
+| `--sprites` orientation | 5 degrees; the offset 25% of a quarter size | the centroid of a sprite at least 18 px across on the pixel grid (worst seen 1.3 deg, 7%) | both rasters, both rasterisers |
+| `--sprites` count | exact | connected blobs; sprites spaced by the golden-ratio start | both |
+| `--sprite-speed` | 0.25 range bins a paint; slope 1e-3 relative; arrival within one frame | the centroid of a disc's chord sampled at bin centres, its two-tap edges symmetric; the frame is the swarm's step | raster-free |
+| `--sprite-beam` | 8 ulp, 16 ulp; share = whole to 4 ulp | as `--persist`; `GainLinear * law * sprite` against `GainLinear * ( law * sprite )`, one reassociation | raster-free |
+| `--sprite-repeat` | bit-exact; 1e-9 between 30 and 60 fps | the same operations in the same order; the closed-form integral | both rasterisers |
+| `--sprite-colour` | 1e-4 of the brightest channel | float `-ln( 1 - out )` near out = 0.9 is ~1e-6 relative | both |
+| `--sprite-motion`, `--sprite-utf16` | 1e-9; exact code units | double sums of frame lengths; integers | CPU (CI runs them) |
 
 **Resize mid-run.** The phosphor, the reflectivity, the kernel and the map are
 sized by constants, never by the host's raster, and the per-column timing is
@@ -291,7 +422,7 @@ because the day someone makes a buffer raster-sized it will catch it.
 
 `ratest --negative` sets one wrong MODEL at a time -- a test hook in the plugin,
 so the shipped shader computes the wrong thing -- and requires the check to
-fail. All 11 are detected:
+fail. All 20 are detected (11 since v0.1.0, 9 for the sprites):
 
 | check | the wrong model |
 | --- | --- |
@@ -306,6 +437,15 @@ fail. All 11 are detected:
 | `--resize` | the phosphor cleared on a resize |
 | `--clock` | elapsed time from the host clock as a float (32 ms steps at 499e6 ms) |
 | `--cues` | every control ramps between keys |
+| `--sprite-utf16` | the path widened byte by byte, as a narrow `fopen` reads it |
+| `--sprite-motion` | Sprite Speed / 60 added a frame, whatever the frame's length |
+| `--sprite-file` | a failed file leaves the last good picture up instead of the blip |
+| `--sprite-threshold` | any alpha at all is the target (threshold ignored) |
+| `--sprites` | Face Centre drawn upright |
+| `--sprite-speed` | the plugin's sprite motion tied to frames (at 24 fps they crawl) |
+| `--sprite-beam` | the sprites' share never fades |
+| `--sprite-repeat` | the sprites' seed salted from the wall clock |
+| `--sprite-colour` | Hue turns the colours the other way |
 
 ### The recorded mutation
 
@@ -318,18 +458,26 @@ half-power crossing at all). Two more GLSL mutants
 (the pulse running inward, caught by `--pulse`; the composite dividing by the
 fade, caught by `--persist`) and one C++ (the wedge starting a bin late,
 caught by `--sweep`) are caught too. This proves the harness drives the
-shaders the plugin ships, not a copy of them.
+shaders the plugin ships, not a copy of them. Since the sprites: the
+composite's mutant moved with `glowAt()` (now `* fade` -> `/ fade`, still
+`--persist`), and two more are caught: every sprite drawn twice its size
+(`2.0 * box.zw` -> `4.0`, `--sprites`) and sprites starting half a radius out
+(`1.0 - s.travelled` -> `1.5`, `--sprite-motion`). Six of six.
 
 ## Shape of the code
 
     source/Controls.*      the ParamIds, HostOrder(), groups, every 0..1 -> units mapping
     source/Sweep.h         the crossing rule: Crossed(), and LineAt() (the negative control)
     source/World.*         the source's contacts (scope units) and rain drift, PCG
+    source/Swarm.*         the sprites' motion: in from the rim, closed-form wobble, PCG (radar#5)
+    source/SpriteImage.*   a file -> the sprite's mask (stb_image, _wfopen on Windows), the built-in blip
     source/Shaders.*       kCommon (sine, cosine, bearingOf, beam, PCG) + kernel, map, reflect, paint, composite
     source/Radar.*         the plugin: parameters, clock, audio, per-column timing, passes
     source/SourcePlugin.cpp, EffectPlugin.cpp   the two registrations
     source/Audio.*         the primed analyser
     tools/ratest/          the harness
+    tools/fixtures/        sprite fixtures (alien.png/.jpg, panda.png, broken.png) and make_fixtures.py
+    external/stb/          stb_image v2.30, the fleet's copy (shunt, flipbook, gridiron, polyhedral)
     tools/sweep.py, mutate.sh, verify.sh, glslc.sh
     docs/arena-expect.json a DRAFT of the fleet gate's expectation (`ratest --expect`)
 
@@ -340,7 +488,7 @@ the numbers: every check above on the GPU at two rasters and on the software
 renderer at 320x180; both bundles universal; oxbow probe reads `SW Radar` /
 `RA01` / source and `SW Radar Over` / `RA02` / effect; oxbow selftest renders
 120 frames through each; 43 parameters over both plugins all move the
-picture.
+picture (65 since the sprites, all of them live).
 
 Assumed, or not done:
 

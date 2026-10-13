@@ -42,6 +42,11 @@ const std::vector< unsigned int >& HostOrder( bool effect )
 			                         PT_SCOPE_SIZE } );
 		if( over )
 			order.push_back( PT_MIX );
+		//Sprites (radar#5), both plugins, after every v0.1.0 control and before
+		//the About block: no released control's host index moves, and Arena
+		//stores a composition's values by name anyway (vectrix's NOTES).
+		for( unsigned int id = PT_SPRITE_FILE; id <= PT_SPRITE_GROW; ++id )
+			order.push_back( id );
 		for( unsigned int id = PT_ABOUT_TEXT; id < PT_COUNT; ++id )
 			order.push_back( id );
 		return order;
@@ -62,6 +67,8 @@ const char* GroupOf( unsigned int id )
 		return "Audio";
 	if( id <= PT_MIX )
 		return "Scope";
+	if( id <= PT_SPRITE_GROW )
+		return "Sprites";
 	return "About";
 }
 
@@ -160,6 +167,51 @@ double FlashTauFor( Phosphor phosphor )
 	case Phosphor::Green: return 0.06;
 	default: return 0.035;
 	}
+}
+
+double SpriteThresholdFromParam( float v )
+{
+	return clamp01( v );
+}
+double SpriteSizeFromParam( float v )
+{
+	return geometric( v, 0.02, 0.5 );
+}
+float ParamFromSpriteSize( double radii )
+{
+	return inverseGeometric( radii, 0.02, 0.5 );
+}
+double SpriteSpeedFromParam( float v )
+{
+	//Exactly zero at the bottom, like RPM: sprites that hold still are a thing
+	//an operator wants (and what the harness measures their size on).
+	if( v <= 0.0f )
+		return 0.0;
+	return geometric( v, 0.004, 0.5 );
+}
+float ParamFromSpriteSpeed( double radiiPerSecond )
+{
+	return radiiPerSecond <= 0.0 ? 0.0f : inverseGeometric( radiiPerSecond, 0.004, 0.5 );
+}
+double SpeedSpreadFromParam( float v )
+{
+	return clamp01( v );
+}
+double StabilityFromParam( float v )
+{
+	return clamp01( v );
+}
+double SpriteHueFromParam( float v )
+{
+	return clamp01( v );
+}
+double SpriteSaturationFromParam( float v )
+{
+	return clamp01( v );
+}
+double SpriteGrowFromParam( float v )
+{
+	return clamp01( v );
 }
 
 int OptionIndex( float value, int count )

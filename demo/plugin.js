@@ -16,8 +16,9 @@
  *   compares them character for character and `tools/verify.sh` runs it. They
  *   are assembled as `Assemble()` assembles them (kVersion + kCommon + body)
  *   and run as the same five passes, in the same order, into buffers of the
- *   same sizes and formats (a 2048 x 1024 RG32F phosphor and scratch, R32F
- *   reflectivity, a 2049 x 1 beam table, a 1024^2 RG32F map), with the same
+ *   same sizes and formats (a 2048 x 1024 RGBA32F phosphor and scratch, RG32F
+ *   reflectivity, a 2049 x 1 beam table, a 1024^2 RG32F map, an R32F sprite
+ *   mask), with the same
  *   uniforms as `RadarPlugin::ProcessOpenGL`. The GLSL has no sin, cos or
  *   atan (the plugin's bounded `sine`, `cosine` and `bearingOf`), and nothing
  *   here adds one.
@@ -25,9 +26,12 @@
  *   **The CPU half is a port** (`RadarState` below), and nothing checks it but
  *   a reader: the antenna in double and the crossed-bin rule (`Sweep.h`), the
  *   per-column crossing timing that produces the Carry and Fade textures, the
- *   clock's jump rule, the contacts and the rain drift (`World.cpp`), every
- *   0..1 conversion (`Controls.cpp`), the ring spacing, the phosphor colours
- *   and `sincHalfPower`. JavaScript numbers are doubles, as the plugin's CPU
+ *   clock's jump rule, the contacts and the rain drift (`World.cpp`), the
+ *   sprites' motion (`Swarm.cpp`), their mask and its box filter
+ *   (`SpriteImage.cpp`, with the browser's decoder in place of stb_image), the
+ *   band culling and the sprites' tint (`Radar.cpp`), every 0..1 conversion
+ *   (`Controls.cpp`), the ring spacing, the phosphor colours and
+ *   `sincHalfPower`. JavaScript numbers are doubles, as the plugin's CPU
  *   state is, and every value handed to the GPU is rounded to float32 on the
  *   way, as the plugin's is.
  *
@@ -51,9 +55,16 @@
  * is 0 against a floor of 0.004, it never fires, and neither a strobe nor a
  * transient contact is ever made -- here as there.
  *
- * **Contacts and Seed are dropdowns.** They are FF_TYPE_INTEGER in the plugin
- * (0-16 and 0-9999). The kit has no integer control, so Contacts offers all
- * seventeen values and Seed 0-99 (the default, 11, is among them).
+ * **Contacts, Seed and Sprite Count are dropdowns.** They are FF_TYPE_INTEGER
+ * in the plugin (0-16, 0-9999 and 0-32). The kit has no integer control, so
+ * Contacts and Sprite Count offer every value and Seed 0-99 (the default, 11,
+ * is among them).
+ *
+ * **Sprite File is a picker** (radar#5). The kit has no file control, so the
+ * page offers the built-in blip, the repository's two fixtures (an alien and a
+ * panda, served from ./sprites/) and a picture from your own machine, decoded
+ * by the browser instead of stb_image and reduced to the plugin's mask by a
+ * port of its box filter. The picture never leaves the page.
  *
  * **The clock.** The kit's clock is seconds accumulated from frame deltas,
  * capped at 0.1 s a frame, paused by Pause. It is handed to the port as the
@@ -78,7 +89,14 @@ const kBearings = 2048;
 const kRanges = 1024;
 const kMapSize = 1024;
 const kMaxTargets = 32;
+const kMaxSprites = 32;
 const kMetresPerMicrosecond = 149.896229;
+/** Radar.cpp: a sprite's reflectivity, and Grow On Approach's 1 + 3 g ( 1 - R ). */
+const kSpriteLevel = 1.0;
+const kSpriteGrowth = 3.0;
+/** SpriteImage.h. */
+const kMaxMaskSide = 128;
+const kMaxImageSide = 8192;
 
 const kMaxFrameDelta = 1.0;
 const kWindowGaussian = 3.0;
@@ -121,6 +139,16 @@ const ThresholdFromParam = (v) => clamp01(v);
 const PersistenceFromParam = (v) => geometric(v, 0.1, 30.0);
 const ParamFromPersistence = (s) => inverseGeometric(s, 0.1, 30.0);
 const FlashFromParam = (v) => linear(v, 0.0, 4.0);
+const SpriteThresholdFromParam = (v) => clamp01(v);
+const SpriteSizeFromParam = (v) => geometric(v, 0.02, 0.5);
+const ParamFromSpriteSize = (r) => inverseGeometric(r, 0.02, 0.5);
+const SpriteSpeedFromParam = (v) => (v <= 0 ? 0 : geometric(v, 0.004, 0.5));
+const ParamFromSpriteSpeed = (s) => (s <= 0 ? 0 : inverseGeometric(s, 0.004, 0.5));
+const SpeedSpreadFromParam = (v) => clamp01(v);
+const StabilityFromParam = (v) => clamp01(v);
+const SpriteHueFromParam = (v) => clamp01(v);
+const SpriteSaturationFromParam = (v) => clamp01(v);
+const SpriteGrowFromParam = (v) => clamp01(v);
 /** FlashTauFor: P7, P19, Green. */
 const FlashTauFor = (phosphor) => (phosphor === 1 ? 0.025 : phosphor === 2 ? 0.06 : 0.035);
 /** std::lround then clamp; lround rounds half away from zero. */
@@ -269,6 +297,186 @@ class Sea {
 }
 
 //===========================================================================
+// Swarm.cpp, ported: the sprites' motion, in from the rim on the host's clock.
+//===========================================================================
+
+function drawOf(seed, slot, generation) {
+  const base = Pcg(u32(Math.imul(seed, 2246822519) + Math.imul(slot, 3266489917) + Math.imul(generation, 668265263) + 374761393));
+  const h = (salt) => Hash01(u32(base + Math.imul(salt, 2654435761)));
+  return {
+    bearing: 2.0 * kPi * h(1),
+    factor: 2.0 * h(2) - 1.0,
+    w1: 0.35 + 0.5 * h(3),
+    w2: 0.9 + 0.9 * h(4),
+    p1: 2.0 * kPi * h(5),
+    p2: 2.0 * kPi * h(6),
+    weaves: 1.5 + 1.5 * h(7),
+    p3: 2.0 * kPi * h(8),
+  };
+}
+
+const wobbleIntegral = (d, t) => -0.6 * Math.cos(d.w1 * t + d.p1) / d.w1 - 0.4 * Math.cos(d.w2 * t + d.p2) / d.w2;
+
+class Swarm {
+  constructor() {
+    this.slots = [];
+    this.last = { count: 0, seed: 0, speed: 0, spread: 0, stability: 1 };
+  }
+
+  static speedOf(s, slot, generation) {
+    return Math.max(s.speed, 0) * Math.pow(3.0, Math.min(1, Math.max(0, s.spread)) * drawOf(s.seed, slot, generation).factor);
+  }
+
+  static startOf(slot) {
+    const v = (slot + 0.5) * 0.6180339887498949;
+    return v - Math.floor(v);
+  }
+
+  step(dt, s) {
+    this.last = s;
+    const count = Math.max(s.count, 0);
+    while (this.slots.length > count) this.slots.pop();
+    while (this.slots.length < count) this.slots.push({ generation: 0, age: 0, travelled: Swarm.startOf(this.slots.length) });
+    if (!(dt > 0)) return;
+    const a = 0.9 * (1.0 - Math.min(1, Math.max(0, s.stability)));
+    for (let i = 0; i < this.slots.length; i += 1) {
+      const slot = this.slots[i];
+      const d = drawOf(s.seed, i, slot.generation);
+      const v = Swarm.speedOf(s, i, slot.generation);
+      const t0 = slot.age;
+      const t1 = slot.age + dt;
+      slot.travelled += v * (dt + (a > 0 ? a * (wobbleIntegral(d, t1) - wobbleIntegral(d, t0)) : 0));
+      slot.age = t1;
+      if (slot.travelled >= 1.0) {
+        slot.generation += 1;
+        slot.age = 0;
+        slot.travelled = 0;
+      }
+    }
+  }
+
+  sprites() {
+    const weave = 0.35 * (1.0 - Math.min(1, Math.max(0, this.last.stability)));
+    return this.slots.map((s, i) => {
+      const d = drawOf(this.last.seed, i, s.generation);
+      let b = d.bearing;
+      if (weave > 0) b += weave * Math.sin(2.0 * kPi * d.weaves * s.travelled + d.p3);
+      b %= 2.0 * kPi;
+      if (b < 0) b += 2.0 * kPi;
+      const range = Math.max(0, 1.0 - s.travelled);
+      return { x: range * Math.sin(b), y: range * Math.cos(b), range, bearing: b };
+    });
+  }
+}
+
+//===========================================================================
+// SpriteImage.cpp, ported: a picture becomes a mask, one value per texel,
+// rows bottom first: alpha if the picture has transparency, otherwise its
+// brightest channel; box-filtered to at most 128 texels on the longer side.
+//===========================================================================
+
+/** The built-in blip: a 64 x 64 cone, 1 at the centre, 0 at the inscribed circle. */
+const BUILT_IN = (() => {
+  const n = 64;
+  const value = new Float32Array(n * n);
+  for (let y = 0; y < n; y += 1) {
+    for (let x = 0; x < n; x += 1) {
+      const u = (x + 0.5) / n - 0.5;
+      const v = (y + 0.5) / n - 0.5;
+      value[y * n + x] = Math.max(0, 1 - Math.sqrt(u * u + v * v) / 0.5);
+    }
+  }
+  return { width: n, height: n, value };
+})();
+
+/** Every row of a w x h grid from w to newW texels, area-weighted. */
+function reduceRows(input, w, h, newW) {
+  const out = new Float32Array(newW * h);
+  const scale = w / newW;
+  for (let x = 0; x < newW; x += 1) {
+    const x0 = x * scale;
+    const x1 = (x + 1) * scale;
+    const first = Math.floor(x0);
+    const last = Math.min(w - 1, Math.ceil(x1) - 1);
+    for (let y = 0; y < h; y += 1) {
+      let sum = 0;
+      for (let s = first; s <= last; s += 1) {
+        const cover = Math.min(x1, s + 1) - Math.max(x0, s);
+        if (cover > 0) sum += cover * input[y * w + s];
+      }
+      out[y * newW + x] = sum / scale;
+    }
+  }
+  return out;
+}
+
+function transpose(input, w, h) {
+  const out = new Float32Array(input.length);
+  for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) out[x * h + y] = input[y * w + x];
+  return out;
+}
+
+function reduceMask(value, width, height) {
+  const longer = Math.max(width, height);
+  if (longer <= kMaxMaskSide) return { width, height, value };
+  const scale = kMaxMaskSide / longer;
+  const newW = Math.max(1, lround(width * scale));
+  const newH = Math.max(1, lround(height * scale));
+  const across = reduceRows(value, width, height, newW);
+  const down = reduceRows(transpose(across, newW, height), height, newW, newH);
+  return { width: newW, height: newH, value: transpose(down, newH, newW) };
+}
+
+/** A decoded picture (straight RGBA, top row first) as the plugin's mask. */
+function maskFromPixels(rgba, width, height) {
+  let transparent = false;
+  for (let i = 3; i < rgba.length && !transparent; i += 4) transparent = rgba[i] < 255;
+  const full = new Float32Array(width * height);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const o = (y * width + x) * 4;
+      const v = transparent ? rgba[o + 3] : Math.max(rgba[o], rgba[o + 1], rgba[o + 2]);
+      full[(height - 1 - y) * width + x] = v / 255;
+    }
+  }
+  return reduceMask(full, width, height);
+}
+
+/** A Blob (a fetched fixture or a file of yours) to a mask, or a reason. */
+async function maskFromBlob(blob) {
+  const bitmap = await createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+  if (bitmap.width > kMaxImageSide || bitmap.height > kMaxImageSide) {
+    throw new Error(`${bitmap.width}x${bitmap.height} is outside 1..${kMaxImageSide} px`);
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(bitmap, 0, 0);
+  const data = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+  return maskFromPixels(data, bitmap.width, bitmap.height);
+}
+
+/** Radar.cpp's tintOf: the phosphor's colour turned by Hue about the grey axis, its chroma x 2 Saturation. */
+function tintOf(colour, hueTurns, saturation) {
+  const a = 2.0 * kPi * hueTurns;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const k = 1.0 / Math.sqrt(3.0);
+  const [r, g, b] = colour;
+  const mean = (r + g + b) / 3.0;
+  const cross = [k * (b - g), k * (r - b), k * (g - r)];
+  return colour.map((v, i) => {
+    const turned = v * c + cross[i] * s + mean * (1.0 - c);
+    return f32(Math.max(0, mean + (turned - mean) * 2.0 * saturation));
+  });
+}
+
+/** The page's sprite pictures: the plugin's blip and the repository's fixtures. */
+const SPRITE_PICTURES = ['Built-in blip', 'Alien (fixture)', 'Panda (fixture)'];
+const SPRITE_URLS = [null, './sprites/alien.png', './sprites/panda.png'];
+
+//===========================================================================
 // The plugin's per-instance state and ProcessOpenGL, ported.
 //===========================================================================
 
@@ -292,9 +500,9 @@ class RadarState {
 
     // PassBuffer::Ensure's formats and sampling. WebGL2 zero-initialises a
     // new texture, which is the plugin's "newly allocated buffers are cleared".
-    this.phosphor = new PassBuffer(gl, { filter: 'nearest' }).ensure(kBearings, kRanges, gl.RG32F);
-    this.scratch = new PassBuffer(gl, { filter: 'nearest' }).ensure(kBearings, kRanges, gl.RG32F);
-    this.reflect = new PassBuffer(gl, { filter: 'nearest' }).ensure(kBearings, kRanges, gl.R32F);
+    this.phosphor = new PassBuffer(gl, { filter: 'nearest' }).ensure(kBearings, kRanges, gl.RGBA32F);
+    this.scratch = new PassBuffer(gl, { filter: 'nearest' }).ensure(kBearings, kRanges, gl.RGBA32F);
+    this.reflect = new PassBuffer(gl, { filter: 'nearest' }).ensure(kBearings, kRanges, gl.RG32F);
     this.kernel = new PassBuffer(gl, { filter: 'nearest' }).ensure(kBearings + 1, 1, gl.R32F);
     this.map = isEffect ? null : new PassBuffer(gl, { filter: 'linear' }).ensure(kMapSize, kMapSize, gl.RG32F);
     this.fadeTexture = floatTexture(gl);
@@ -314,6 +522,9 @@ class RadarState {
     this.lastNow = -1.0;
 
     this.sea = new Sea();
+    this.swarm = new Swarm();
+    this.spriteTexture = gl.createTexture();
+    this.spriteMaskShown = null;
     this.stats = { rotations: 0, painted: 0, targets: 0, rpm: 0 };
   }
 
@@ -322,6 +533,22 @@ class RadarState {
     for (const b of [this.phosphor, this.scratch, this.reflect, this.kernel, this.map]) b?.dispose();
     gl.deleteTexture(this.fadeTexture);
     gl.deleteTexture(this.carryTexture);
+    gl.deleteTexture(this.spriteTexture);
+  }
+
+  /** RadarPlugin::uploadSpriteMask: R32F, bilinear, clamped. */
+  showMask(mask) {
+    if (this.spriteMaskShown === mask) return;
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.spriteTexture);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, mask.width, mask.height, 0, gl.RED, gl.FLOAT, mask.value);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    this.spriteMaskShown = mask;
   }
 }
 
@@ -347,6 +574,35 @@ function createRenderer(gl, quad) {
 
   let instance = null;
   let instanceVariant = null;
+
+  // The sprite picture: a mask per choice, fetched and decoded once; your own
+  // file replaces the choice's until the choice is changed.
+  const masks = new Map([[0, BUILT_IN]]);
+  const pending = new Set();
+  let spriteNote = '';
+  let ownMask = null;
+  let ownChoice = -1;
+  function maskFor(choice) {
+    if (ownMask && ownChoice === choice) return ownMask;
+    ownMask = null;
+    if (masks.has(choice)) return masks.get(choice);
+    if (!pending.has(choice) && SPRITE_URLS[choice]) {
+      pending.add(choice);
+      fetch(SPRITE_URLS[choice])
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.blob();
+        })
+        .then(maskFromBlob)
+        .then((mask) => masks.set(choice, mask))
+        .catch((error) => {
+          // As the plugin does with a file it cannot read: the blip, and why.
+          masks.set(choice, BUILT_IN);
+          spriteNote = `${SPRITE_PICTURES[choice]} could not be loaded (${error.message}): the built-in blip`;
+        });
+    }
+    return BUILT_IN;
+  }
 
   const unbind = (count) => {
     for (let unit = count - 1; unit >= 0; unit -= 1) bindTexture(gl, unit, null);
@@ -383,6 +639,15 @@ function createRenderer(gl, quad) {
 
   return {
     get stats() { return instance?.stats ?? null; },
+
+    /** A picture of your own for the current choice of Sprite, until it changes. */
+    async useOwnSprite(file, choice) {
+      const mask = await maskFromBlob(file);
+      ownMask = mask;
+      ownChoice = choice;
+      spriteNote = `${file.name}: ${mask.width}x${mask.height} mask`;
+      return mask;
+    },
 
     render({ input, params, width, height, time, variant }) {
       const isEffect = variant === 'over';
@@ -429,6 +694,40 @@ function createRenderer(gl, quad) {
       const targets = isEffect ? [] : st.sea.targets();
 
       //-------------------------------------------------------------------
+      // The sprites (radar#5), both plugins.
+      //-------------------------------------------------------------------
+      st.swarm.step(dt, {
+        count: Math.min(kMaxSprites, Math.max(0, lround(params.get('spriteCount')))),
+        seed,
+        speed: SpriteSpeedFromParam(params.get('spriteSpeed')),
+        spread: SpeedSpreadFromParam(params.get('speedSpread')),
+        stability: StabilityFromParam(params.get('stability')),
+      });
+      const spriteChoice = OptionIndex(params.get('sprite'), SPRITE_PICTURES.length);
+      const mask = maskFor(spriteChoice);
+      st.showMask(mask);
+      const spriteDraws = [];
+      {
+        const size = SpriteSizeFromParam(params.get('spriteSize'));
+        const grow = SpriteGrowFromParam(params.get('grow'));
+        const faceCentre = OptionIndex(params.get('orientation'), 2) === 1;
+        const longer = Math.max(1, mask.width, mask.height);
+        for (const placed of st.swarm.sprites()) {
+          const side = size * (1.0 + kSpriteGrowth * grow * (1.0 - Math.min(1, Math.max(0, placed.range))));
+          spriteDraws.push({
+            x: placed.x,
+            y: placed.y,
+            hx: 0.5 * side * (mask.width / longer),
+            hy: 0.5 * side * (mask.height / longer),
+            upSin: faceCentre ? Math.sin(placed.bearing) : 0.0,
+            upCos: faceCentre ? Math.cos(placed.bearing) : 1.0,
+            range: placed.range,
+            bearing: placed.bearing,
+          });
+        }
+      }
+
+      //-------------------------------------------------------------------
       // The scope on the screen.
       //-------------------------------------------------------------------
       const scopeSize = Math.min(1, Math.max(0, params.get('scopeSize')));
@@ -467,7 +766,37 @@ function createRenderer(gl, quad) {
       //-------------------------------------------------------------------
       const threshold = ThresholdFromParam(params.get('threshold'));
       const surfaceOn = isEffect ? threshold < 1.0 : LandFromParam(params.get('land')) > 0.0;
-      if (wedge.count > 0 && surfaceOn) {
+      // The sprites the beam can reach from this wedge, by their bounding circles.
+      const spriteBox = new Float32Array(kMaxSprites * 4);
+      const spriteTurn = new Float32Array(kMaxSprites * 4);
+      const spriteReach = new Float32Array(kMaxSprites * 4);
+      let spritesInBand = 0;
+      if (wedge.count > 0) {
+        const total = wedge.count + 2 * win;
+        const bandMid = wedge.first - win + 0.5 * (total - 1);
+        for (const d of spriteDraws) {
+          if (spritesInBand >= kMaxSprites) break;
+          const rho = Math.sqrt(d.hx * d.hx + d.hy * d.hy);
+          if (d.range - rho >= 1.0) continue;
+          const halfAngle = d.range <= rho ? kPi : Math.asin(rho / d.range);
+          let reach = total >= kBearings || d.range <= rho;
+          if (!reach) {
+            const centre = d.bearing / binAngle - 0.5;
+            let off = (centre - bandMid) % kBearings;
+            if (off > kBearings / 2) off -= kBearings;
+            if (off < -kBearings / 2) off += kBearings;
+            reach = Math.abs(off) <= 0.5 * (total - 1) + halfAngle / binAngle + 1.0;
+          }
+          if (!reach) continue;
+          const o = spritesInBand * 4;
+          spriteBox.set([d.x, d.y, d.hx, d.hy], o);
+          spriteTurn.set([d.upSin, d.upCos, 0, 0], o);
+          spriteReach.set([d.range, rho * 1.001 + 1e-5, d.bearing, Math.min(kPi, halfAngle * 1.001 + 1e-5)], o);
+          spritesInBand += 1;
+        }
+      }
+      const reflectOn = surfaceOn || spritesInBand > 0;
+      if (wedge.count > 0 && reflectOn) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, st.reflect.fbo);
         const p = programs.reflect.use();
         bindTexture(gl, 0, isEffect ? input.texture : st.map.texture);
@@ -484,6 +813,14 @@ function createRenderer(gl, quad) {
         p.set('MaxUV', 1.0, 1.0);
         p.set('Threshold', f32(threshold));
         p.set('ShadowScale', f32(rangeKm / kShadowKm));
+        p.setInt('SurfaceOn', surfaceOn ? 1 : 0);
+        bindTexture(gl, 1, st.spriteTexture);
+        p.setSampler('SpriteMask', 1);
+        p.setInt('SpriteCount', spritesInBand);
+        p.setArray('SpriteBox', spriteBox, 4);
+        p.setArray('SpriteTurn', spriteTurn, 4);
+        p.setArray('SpriteReach', spriteReach, 4);
+        p.set('SpriteThreshold', f32(SpriteThresholdFromParam(params.get('spriteThreshold'))));
 
         const total = wedge.count + 2 * win;
         if (total >= kBearings) {
@@ -499,7 +836,7 @@ function createRenderer(gl, quad) {
             quad.draw();
           }
         }
-        unbind(1);
+        unbind(2);
       }
 
       //-------------------------------------------------------------------
@@ -551,7 +888,8 @@ function createRenderer(gl, quad) {
         p.setSampler('Carry', 2);
         p.setSampler('Kernel', 3);
         p.setInt('KernelHalf', kBearings / 2);
-        p.setInt('SurfaceOn', surfaceOn ? 1 : 0);
+        p.setInt('SurfaceOn', reflectOn ? 1 : 0);
+        p.set('SpriteLevel', kSpriteLevel);
         p.setInt('Bearings', kBearings);
         p.setInt('Ranges', kRanges);
         p.setInt('FirstCol', start);
@@ -631,6 +969,16 @@ function createRenderer(gl, quad) {
         p.set('AfterColour', ...look.after);
         p.set('OverlayColour', ...look.overlay);
         p.set('FaceColour', ...look.face);
+        {
+          const hue = SpriteHueFromParam(params.get('hue'));
+          const saturation = SpriteSaturationFromParam(params.get('saturation'));
+          const tint = (hue > 0 && hue < 1) || saturation !== 0.5;
+          p.setInt('SpriteTint', tint ? 1 : 0);
+          p.set('SpriteFlashColour', ...(tint ? tintOf(look.flash, hue, saturation) : look.flash));
+          p.set('SpriteAfterColour', ...(tint ? tintOf(look.after, hue, saturation) : look.after));
+          p.setInt('SpriteNoFadeForTest', 0);
+          p.setInt('PolarSpritesForTest', 0);
+        }
         p.set('RingSpacing', f32(ringSpacingKm(rangeKm) / rangeKm));
         p.set('RingLevel', Math.min(1, Math.max(0, params.get('rings'))));
         p.set('MarkLevel', Math.min(1, Math.max(0, params.get('bearingMarks'))));
@@ -646,6 +994,8 @@ function createRenderer(gl, quad) {
         rotations: st.antenna / kBearings,
         painted: wedge.count,
         targets: targets.length,
+        sprites: spriteDraws.length,
+        spriteNote,
         rangeKm,
         ringKm: ringSpacingKm(rangeKm),
         clock: st.clock,
@@ -664,6 +1014,13 @@ const signed = (n, digits = 0) => `${n >= 0 ? '+' : '−'}${Math.abs(n).toFixed(
 /** Three significant figures, for the geometric controls. */
 const sig = (n) => (n >= 100 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n >= 1 ? n.toFixed(2) : n.toFixed(3));
 
+/** The sprites' defaults (radar#5), the same in both constructors: off. */
+const SPRITE_DEFAULTS = {
+  sprite: 0, spriteThreshold: 0.5, spriteCount: 0, spriteSize: ParamFromSpriteSize(0.1),
+  spriteSpeed: ParamFromSpriteSpeed(0.04), speedSpread: 0.35, stability: 0.75, orientation: 0,
+  hue: 0, saturation: 0.5, grow: 0,
+};
+
 /**
  * The constructor's defaults: its whole `params[ ... ] = ...` block, source then
  * Over. Each holds every id, because the plugin's array does: a control the
@@ -677,6 +1034,7 @@ const DEFAULTS = {
     persistence: ParamFromPersistence(1.6), flash: 0.375, phosphor: 0, rings: 0.35, bearingMarks: 0.5,
     headingLine: 1, scopeSize: 0.0,
     threshold: 0.2, mix: 1.0,
+    ...SPRITE_DEFAULTS,
   },
   over: {
     rpm: ParamFromRpm(24.0), beamwidth: ParamFromBeamwidth(2.0), sidelobes: 0.35, direction: 0,
@@ -684,6 +1042,7 @@ const DEFAULTS = {
     clutter: 0.2, noise: 0.3, contacts: 7, rain: 0.4, land: 0.7, seed: 11, threshold: 0.2,
     persistence: ParamFromPersistence(1.6), flash: 0.375, phosphor: 0, rings: 0.35, bearingMarks: 0.5,
     headingLine: 0, scopeSize: 1.0, mix: 1.0,
+    ...SPRITE_DEFAULTS,
   },
 };
 
@@ -731,6 +1090,30 @@ const PARAMS = [
   { id: 'headingLine', name: 'Heading Line', type: 'boolean', group: 'Scope', hint: 'A line from the centre to north: the ship’s heading.' },
   std('scopeSize', 'Scope Size', 'Scope', (v) => fmt(v, 2), '0: the scope inscribed in the frame; 1: covering the whole frame.'),
   std('mix', 'Mix', 'Scope', (v) => fmt(v, 2), 'The clip against the scope. At 0 the clip is returned as it came.', 'over'),
+
+  opt('sprite', 'Sprite File', SPRITE_PICTURES, 'Sprites',
+    'A file parameter in the plugin (PNG or JPG; empty is the built-in blip). Here: the blip, the repository’s two fixtures, or a picture of your own from the button under the scope.'),
+  std('spriteThreshold', 'Sprite Threshold', 'Sprites', (v) => fmt(SpriteThresholdFromParam(v), 2),
+    'The picture’s alpha (or, with no transparency, its brightest channel) over this is the target. On the blip it sets the disc’s size: Size × (1 − Threshold).'),
+  opt('spriteCount', 'Sprite Count', Array.from({ length: kMaxSprites + 1 }, (_, i) => String(i)), 'Sprites',
+    'How many at once. 0 (the default) is off. FF_TYPE_INTEGER 0–32 in the plugin; a dropdown here.'),
+  std('spriteSize', 'Sprite Size', 'Sprites', (v) => `${fmt(SpriteSizeFromParam(v), 3)} of the radius`,
+    'The picture’s longer side, 0.02 to 0.5 of the scope’s radius. In scope units, like the contacts: Range does not zoom it.'),
+  std('spriteSpeed', 'Sprite Speed', 'Sprites',
+    (v) => (SpriteSpeedFromParam(v) === 0 ? 'holding still' : `${sig(SpriteSpeedFromParam(v))} radii/s, ${sig(1 / SpriteSpeedFromParam(v))} s rim to centre`),
+    'How fast they close on the centre: 0 holds them still, then 0.004 to 0.5 of the radius a second.'),
+  std('speedSpread', 'Speed Spread', 'Sprites', (v) => fmt(SpeedSpreadFromParam(v), 2),
+    '0: all at Sprite Speed. 1: each at its own, a third to three times it.'),
+  std('stability', 'Stability', 'Sprites', (v) => fmt(StabilityFromParam(v), 2),
+    '1: each travels at a steady speed, straight in. 0: their speed surges and sags and they weave in bearing.'),
+  opt('orientation', 'Orientation', ['Upright', 'Face Centre'], 'Sprites',
+    'Upright: every sprite’s top towards the top of the screen. Face Centre: its bottom towards the centre.'),
+  std('hue', 'Hue', 'Sprites', (v) => `${Math.round(SpriteHueFromParam(v) * 360)}°`,
+    'Turns the phosphor’s colours for the sprites, 0 to 360°. 0 is the phosphor’s own.'),
+  std('saturation', 'Saturation', 'Sprites', (v) => `${fmt(2 * SpriteSaturationFromParam(v), 2)}× chroma`,
+    'The sprites’ chroma against the phosphor’s: 0 grey, 0.5 the phosphor’s own, 1 twice it.'),
+  std('grow', 'Grow On Approach', 'Sprites', (v) => `${fmt(1 + 3 * SpriteGrowFromParam(v), 2)}× at the centre`,
+    '0: the same size all the way in. 1: four times the size at the centre, growing linearly.'),
 ];
 for (const p of PARAMS) p.default = DEFAULTS[initialVariant][p.id];
 
@@ -745,7 +1128,7 @@ const mounted = mountDemo({
   repo: 'https://github.com/stoatworks-labs/radar',
 
   blurb:
-    'It is Radar’s own five GLSL passes, ported from the repository to WebGL2 and driven by a JavaScript port of the plugin’s CPU half — the antenna and its crossed-bin rule, the per-column crossing timing behind the phosphor’s decay, the clock, the contacts and the rain’s drift — which only a reader checks. There is no audio here, so the audio controls are absent. SW Radar reads no video; SW Radar Over turns a generated clip into the sea.',
+    'It is Radar’s own five GLSL passes, ported from the repository to WebGL2 and driven by a JavaScript port of the plugin’s CPU half — the antenna and its crossed-bin rule, the per-column crossing timing behind the phosphor’s decay, the clock, the contacts and the rain’s drift, the sprites’ motion and mask — which only a reader checks. There is no audio here, so the audio controls are absent. SW Radar reads no video; SW Radar Over turns a generated clip into the sea.',
 
   // The source is transparent outside the scope's circle; the backdrop shows it.
   showBackdrop: true,
@@ -768,10 +1151,11 @@ const mounted = mountDemo({
   params: PARAMS,
 
   differences: [
-    'The CPU half is a PORT, not the plugin’s code, and nothing checks it but a reader. The antenna’s position in double and the crossed-bin rule (Sweep.h), the per-column crossing timing that gives the Carry and Fade textures (Radar.cpp), the clock’s jump rule, the contacts and the rain’s drift (World.cpp), every control’s conversion (Controls.cpp), the ring spacing, the phosphor colours and the sinc half-power point are translated to JavaScript here. The repository’s ratest --sweep, --sweep-law, --persist and --clock check the C++ and have never heard of this page.',
+    'The CPU half is a PORT, not the plugin’s code, and nothing checks it but a reader. The antenna’s position in double and the crossed-bin rule (Sweep.h), the per-column crossing timing that gives the Carry and Fade textures (Radar.cpp), the clock’s jump rule, the contacts and the rain’s drift (World.cpp), the sprites’ motion (Swarm.cpp), their mask and its box filter (SpriteImage.cpp), the band culling and the sprites’ tint (Radar.cpp), every control’s conversion (Controls.cpp), the ring spacing, the phosphor colours and the sinc half-power point are translated to JavaScript here. The repository’s ratest --sweep, --sweep-law, --persist and --clock check the C++ and have never heard of this page.',
     'The GPU half is not a port: the kernel, map, reflect, paint and composite passes are the plugin’s own GLSL, at the plugin’s own buffer sizes and formats (a 2048 × 1024 32-bit float phosphor), and demo/tools/check_shaders.py fails the repository’s verify script if a character of them drifts. The GLSL keeps the plugin’s bounded sine, cosine and bearingOf; the browser’s own trig is never used on the GPU.',
     'Nothing audio. The plugin declares an Audio FFT buffer that Resolume fills, with Audio Strobe (both plugins) and Audio Contacts (the source) over its onsets. A browser has no Resolume FFT, so all three are absent from this panel rather than present and dead. With no spectrum the plugin’s analyser never fires, so leaving them out changes nothing the page draws: no strobe spoke and no transient contact is ever made, here as in a Resolume layer with no audio.',
-    'Contacts and Seed are FF_TYPE_INTEGER in the plugin (0–16 and 0–9999). The kit has no integer control, so they are dropdowns here: Contacts offers all seventeen values, Seed only 0–99. The About block is not on the panel.',
+    'Contacts, Seed and Sprite Count are FF_TYPE_INTEGER in the plugin (0–16, 0–9999 and 0–32). The kit has no integer control, so they are dropdowns here: Contacts and Sprite Count offer every value, Seed only 0–99. The About block is not on the panel.',
+    'Sprite File is a file parameter in the plugin, and the kit has no file control. Here it is a choice of the built-in blip and the repository’s two fixtures (an alien and a panda), and the button under the scope loads a PNG or JPG of your own for the chosen slot. The browser decodes it, not stb_image, and the page reduces it to the plugin’s mask (alpha, or the brightest channel when there is no transparency, box-filtered to 128 texels) with a port of the plugin’s code. Nothing you load leaves the page.',
     'Switching the Plugin dropdown is a new instance, as it would be in Resolume: the phosphor, the antenna and the sea start again, and every control goes to that plugin’s constructor default, because the two plugins declare different controls and different defaults for five of the shared ones (Gain, STC, Clutter, Heading Line, Scope Size).',
     'The clock is the page’s: seconds from frame deltas, capped at a tenth of a second a frame, so on a slow machine the antenna turns slowly rather than jumping. The plugin’s vote on whether the host sends seconds or milliseconds is not ported, because this host’s unit is known. Restart is a clock jump, which the plugin takes as no time passing, so the antenna carries on from where it was; switching the Plugin dropdown is what starts it again. Paused, a moved look control redraws the frame without advancing the antenna.',
     'Over: the clip is the kit’s generated one, premultiplied, and the plugin reads the brightest channel times alpha — so over the transparency clip a half-transparent edge reflects as alpha squared, where Resolume’s own clips may arrive straight. GetMaxGLTexCoords is 1 here: the page’s textures are exactly the raster.',
@@ -843,6 +1227,27 @@ if (mounted) {
       line.id = 'radar-stats';
       line.setAttribute('aria-live', 'off');
       stage.append(line);
+
+      // Sprite File's own picture: a file input, as the plugin's file
+      // parameter would be. It replaces the chosen slot's picture until the
+      // choice changes.
+      const pick = document.createElement('label');
+      pick.className = 'stage__status';
+      pick.textContent = 'Your own sprite (PNG or JPG, it stays on this page): ';
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/png,image/jpeg';
+      input.addEventListener('change', () => {
+        const file = input.files?.[0];
+        if (!file || !renderer) return;
+        const choice = OptionIndex(params.get('sprite'), SPRITE_PICTURES.length);
+        renderer.useOwnSprite(file, choice).catch((error) => {
+          line.textContent = `${file.name} could not be read (${error.message}): the sprite stays as it was`;
+        });
+        if (lround(params.get('spriteCount')) === 0) params.set('spriteCount', 8);
+      });
+      pick.append(input);
+      stage.append(pick);
       setInterval(() => {
         const s = renderer?.stats;
         if (!s || s.rpm === undefined) return;
@@ -852,7 +1257,9 @@ if (mounted) {
           + ` · ${Math.abs(s.rotations).toFixed(1)} rotations since this instance started`
           + ` · ${s.painted} of 2048 bearing bins painted in the last frame`
           + ` · rings every ${s.ringKm} km on a ${sig(s.rangeKm)} km scope`
-          + (over ? '' : ` · ${s.targets} contact${s.targets === 1 ? '' : 's'}`);
+          + (over ? '' : ` · ${s.targets} contact${s.targets === 1 ? '' : 's'}`)
+          + (s.sprites ? ` · ${s.sprites} sprite${s.sprites === 1 ? '' : 's'}` : '')
+          + (s.spriteNote ? ` · ${s.spriteNote}` : '');
       }, 250);
     }
   }

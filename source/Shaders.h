@@ -21,15 +21,19 @@
       2. reflect    the reflectivity in range x bearing, for the bearing band
                     the beam can reach from this frame's wedge: a polar
                     resample of the map (source) or the clip (Over),
-                    averaged over the pulse's range footprint
+                    averaged over the pulse's range footprint; and, in a
+                    second channel, the sprites' masks over Sprite Threshold
+                    (radar#5), the same way
       3. paint      the wedge's columns only, into a scratch buffer copied
                     back: the last paint carried forward by its decay, plus
                     this frame's echo -- the band convolved with the beam
                     pattern, the point targets analytically, clutter, rain,
-                    noise, STC, the radar equation
+                    noise, STC, the radar equation; four components, the
+                    sprites' share of the echo beside the whole
       4. composite  polar -> the screen: every texel faded by its column's
                     age (timed on the CPU in double), the two components in
-                    their colours, the rings and marks, the clip (Over)
+                    their colours (the sprites' share in theirs), the rings
+                    and marks, the clip (Over)
 */
 namespace radar::shaders
 {

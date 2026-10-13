@@ -3,7 +3,9 @@
 #include "Audio.h"
 #include "Controls.h"
 #include "PassBuffer.h"
+#include "SpriteImage.h"
 #include "Sweep.h"
+#include "Swarm.h"
 #include "World.h"
 
 #include <FFGLSDK.h>
@@ -11,6 +13,8 @@
 // After FFGLSDK.h, which is where FFUInt32 comes from.
 #include "StoatworksAboutParams.h"
 
+#include <mutex>
+#include <string>
 #include <vector>
 
 namespace radar
@@ -27,6 +31,24 @@ namespace radar
 class RadarPlugin : public CFFGLPlugin
 {
 public:
+	/// Where the sprites' mask came from (radar#5).
+	enum class SpriteSource
+	{
+		BuiltIn, ///< no file set: the blip
+		File,    ///< the file named by Sprite File
+		Fallback ///< the file failed (logged): the blip
+	};
+
+	/// One sprite as the reflect pass draws it, in scope units.
+	struct SpriteDraw
+	{
+		double x = 0.0, y = 0.0;    ///< centre, x east, y north
+		double hx = 0.0, hy = 0.0;  ///< half its width and height
+		double upSin = 0.0, upCos = 1.0;///< its up, ( sin psi, cos psi )
+		double range = 0.0, bearing = 0.0;
+		uint32_t generation = 0;    ///< how many times this slot has started again at the rim
+	};
+
 	explicit RadarPlugin( bool isEffect );
 	~RadarPlugin() override;
 
@@ -49,6 +71,11 @@ public:
 	unsigned int ParamCount() const
 	{
 		return static_cast< unsigned int >( hostOrder.size() );
+	}
+	/// The ParamId at a host index (the harness's --expect).
+	unsigned int IdOfHostForTest( unsigned int host ) const
+	{
+		return host < hostOrder.size() ? hostOrder[ host ] : PT_COUNT;
 	}
 	/// The host index of a ParamId, or -1 if this plugin does not declare it.
 	int HostIndexOf( unsigned int id ) const
@@ -134,15 +161,54 @@ public:
 	{
 		clearOnResizeForTest = on;
 	}
+	/// --sprites' negative control: Face Centre drawn upright.
+	void SetSpriteOrientationIgnoredForTest( bool on )
+	{
+		spriteOrientationIgnoredForTest = on;
+	}
+	/// --sprite-threshold's negative control: any alpha at all is the target.
+	void SetSpriteThresholdIgnoredForTest( bool on )
+	{
+		spriteThresholdIgnoredForTest = on;
+	}
+	/// --sprite-file's negative control: a file that fails leaves the last
+	/// good picture up instead of falling back to the blip.
+	void SetSpriteKeepLastOnFailureForTest( bool on )
+	{
+		spriteKeepLastForTest = on;
+	}
+	/// --sprite-beam's negative control: the sprites' share never fades.
+	void SetSpriteNoFadeForTest( bool on )
+	{
+		spriteNoFadeForTest = on;
+	}
+	/// --sprite-speed's negative control: motion tied to frames, not time.
+	void SetSpritePerFrameForTest( bool on )
+	{
+		swarm.SetPerFrameForTest( on );
+	}
+	/// --sprite-repeat's negative control: the sprites' seed salted from the
+	/// wall clock, the way a rand() seeded with time() would be.
+	void SetSpriteWallSeedForTest( bool on )
+	{
+		spriteWallSeedForTest = on;
+	}
+	/// --sprite-colour's negative control: Hue turns the colours backwards.
+	void SetSpriteHueBackwardsForTest( bool on )
+	{
+		spriteHueBackwardsForTest = on;
+	}
 
 	/// The composite draws the harness a window onto the polar grid instead
 	/// of the scope: output pixel ( x, y ) is texel ( x, y ) + origin, faded
 	/// to now exactly as the scope's pixels are.
-	void SetPolarViewForTest( bool on, int originBearing = 0, int originRange = 0 )
+	/// `spriteShare`: the window shows the sprites' (flash, afterglow) share.
+	void SetPolarViewForTest( bool on, int originBearing = 0, int originRange = 0, bool spriteShare = false )
 	{
-		polarView      = on;
+		polarView        = on;
 		polarOrigin[ 0 ] = originBearing;
 		polarOrigin[ 1 ] = originRange;
+		polarSprites     = spriteShare;
 	}
 
 	/// The state: each texel as its column was left by its last paint.
@@ -179,12 +245,40 @@ public:
 	{
 		return sea.Size();
 	}
+	/// The sprites, as the last frame placed them (all of them, before the
+	/// reflect pass culls to the band the beam can reach).
+	const std::vector< SpriteDraw >& SpritesForTest() const
+	{
+		return spriteDraws;
+	}
+	SpriteSource SpriteSourceForTest() const
+	{
+		return spriteSource;
+	}
+	const std::string& SpriteWhyForTest() const
+	{
+		return spriteWhy;
+	}
+	const sprite::Mask& SpriteMaskForTest() const
+	{
+		return spriteMask;
+	}
+	/// How many sprites the last reflect pass was handed.
+	int SpritesInBandForTest() const
+	{
+		return spritesInBand;
+	}
 
 private:
 	void UpdateClock();
 	bool ensureBuffers();
 	void buildMap();
 	void setBeamUniforms( ffglex::FFGLShader& shader ) const;
+	/// Load the sprite file if Sprite File changed, and keep the texture
+	/// current. Lazily, on the render thread: never in the constructor.
+	void updateSprite();
+	void uploadSpriteMask();
+	std::string spritePathNow();
 
 	const bool isEffect;
 	const std::vector< unsigned int >& hostOrder;
@@ -228,6 +322,22 @@ private:
 	std::vector< world::Target > testTargets;
 	bool useTestTargets = false;
 
+	//Sprites (radar#5). The path arrives through SetTextParameter, possibly
+	//from another thread, so it is kept under a lock; everything else is the
+	//render thread's.
+	std::mutex spritePathMutex;
+	std::string spritePath, spritePathReturn;
+	std::string spriteLoadedPath;
+	bool spriteEverLoaded = false;
+	sprite::Mask spriteMask;
+	SpriteSource spriteSource = SpriteSource::BuiltIn;
+	std::string spriteWhy;
+	GLuint spriteTexture = 0;
+	bool spriteTextureStale = true;
+	swarm::Swarm swarm;
+	std::vector< SpriteDraw > spriteDraws;
+	int spritesInBand = 0;
+
 	audio::Analyser analyser;
 	bool unprimed       = false;
 	float pendingStrobe = 0.0f;
@@ -245,7 +355,14 @@ private:
 	bool clearOnResizeForTest = false;
 	bool mirrorForTest        = false;
 	bool polarView            = false;
+	bool polarSprites         = false;
 	int polarOrigin[ 2 ]      = { 0, 0 };
+	bool spriteOrientationIgnoredForTest = false;
+	bool spriteThresholdIgnoredForTest   = false;
+	bool spriteKeepLastForTest           = false;
+	bool spriteNoFadeForTest             = false;
+	bool spriteWallSeedForTest           = false;
+	bool spriteHueBackwardsForTest       = false;
 };
 
 } // namespace radar
