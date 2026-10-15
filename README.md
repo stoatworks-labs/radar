@@ -25,15 +25,15 @@ plugin's offline harness (`ratest`) rather than captured from Resolume.</sub>
 
 ## Download
 
-**[v0.1.0](https://github.com/stoatworks-labs/radar/releases/tag/v0.1.0)** — prebuilt for macOS and Windows. Pick your platform:
+**[v0.2.0](https://github.com/stoatworks-labs/radar/releases/tag/v0.2.0)** — prebuilt for macOS and Windows. Pick your platform:
 
 <details>
 <summary><b>macOS</b> — Universal (Apple Silicon + Intel)</summary>
 
 | Build | Download | Size |
 | --- | --- | --- |
-| Universal (Apple Silicon + Intel) · .dmg disk image | [`radar-0.1.0-macos-universal.dmg`](https://github.com/stoatworks-labs/radar/releases/download/v0.1.0/radar-0.1.0-macos-universal.dmg) | 458 KB |
-| Universal (Apple Silicon + Intel) · .zip archive | [`radar-macos-universal.zip`](https://github.com/stoatworks-labs/radar/releases/latest/download/radar-macos-universal.zip) | 404 KB |
+| Universal (Apple Silicon + Intel) · .dmg disk image | [`radar-0.2.0-macos-universal.dmg`](https://github.com/stoatworks-labs/radar/releases/download/v0.2.0/radar-0.2.0-macos-universal.dmg) | 760 KB |
+| Universal (Apple Silicon + Intel) · .zip archive | [`radar-macos-universal.zip`](https://github.com/stoatworks-labs/radar/releases/latest/download/radar-macos-universal.zip) | 686 KB |
 
 </details>
 
@@ -42,8 +42,8 @@ plugin's offline harness (`ratest`) rather than captured from Resolume.</sub>
 
 | Build | Download | Size |
 | --- | --- | --- |
-| x64 · .exe installer | [`radar-0.1.0-windows-x86_64-setup.exe`](https://github.com/stoatworks-labs/radar/releases/download/v0.1.0/radar-0.1.0-windows-x86_64-setup.exe) | 238 KB |
-| x64 · .zip archive | [`radar-windows-x86_64.zip`](https://github.com/stoatworks-labs/radar/releases/latest/download/radar-windows-x86_64.zip) | 249 KB |
+| x64 · .exe installer | [`radar-0.2.0-windows-x86_64-setup.exe`](https://github.com/stoatworks-labs/radar/releases/download/v0.2.0/radar-0.2.0-windows-x86_64-setup.exe) | 292 KB |
+| x64 · .zip archive | [`radar-windows-x86_64.zip`](https://github.com/stoatworks-labs/radar/releases/latest/download/radar-windows-x86_64.zip) | 357 KB |
 
 </details>
 
