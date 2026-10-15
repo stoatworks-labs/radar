@@ -4,8 +4,7 @@
 > (Anthropic), directed and reviewed by a human author. It's **never been loaded into
 > Resolume on macOS**, where the only host it's met is [oxbow](https://github.com/stoatworks-labs/oxbow),
 > a real FFGL host that isn't Resolume. On Windows both plugins pass the fleet's Arena gate in
-> Resolume Arena 7.27.1 on software rendering, as released at v0.1.0; the sprites added since
-> haven't been in any Resolume yet. Everything else is measured by an offline
+> Resolume Arena 7.27.1 on software rendering, sprites included, at v0.2.0. Everything else is measured by an offline
 > harness that drives the real plugin classes in a headless GL context, on this Mac's GPU at
 > two rasters and again on Apple's software renderer, and every check is also run against a
 > wrong model to make sure it can fail. The numbers, and what I haven't tried yet, are under
@@ -110,7 +109,7 @@ covering the frame. Rendered by `ratest`.</sub>
   blue-white flash's strength), Phosphor (*P7*, *P19*, *Green*), Rings, Bearing
   Marks, Heading Line, Scope Size (from inscribed in the frame to covering it);
   the Over also has Mix.
-- **Sprites** (both plugins; new since v0.1.0, not released yet, from
+- **Sprites** (both plugins; new in v0.2.0, from
   [radar#5](https://github.com/stoatworks-labs/radar/issues/5)): your own picture
   as contacts that come in from the rim to the centre, painted by the beam and
   fading on the phosphor like any other echo. Sprite File (a PNG or JPG; empty
@@ -126,17 +125,16 @@ covering the frame. Rendered by `ratest`.</sub>
 ![Ten alien sprites closing on the centre of SW Radar, each leaving fading copies of itself along its track](docs/sprites.png)
 
 <sub>SW Radar with ten sprites of the repository's test alien (`tools/fixtures/alien.png`),
-rendered by `ratest`. Never yet seen in Resolume.</sub>
+rendered by `ratest` rather than captured from Resolume.</sub>
 
 ## Status
 
-**v0.1.0, released 25 September 2026, and still early days.** There's a
+**v0.2.0, released 15 October 2026, and still early days.** There's a
 [user guide](https://stoatworks-labs.com/software/radar/guide/)
 ([PDF](docs/USER-GUIDE.pdf)) and a [project page](https://stoatworks-labs.com/software/radar/).
 
-**The sprites (radar#5) are on main and not in a release.** Everything below
-about them is the offline harness and the browser demo: they have never been
-loaded into Resolume, on macOS or on Windows.
+**v0.2.0 adds the sprites ([radar#5](https://github.com/stoatworks-labs/radar/issues/5)).**
+They've been in Resolume Arena on Windows (below), never in Resolume on macOS.
 
 It's **never been loaded into Resolume on macOS**. `oxbow probe` reads the
 bundles as a host does (`SW Radar` / `RA01` / source, `SW Radar Over` / `RA02` /
@@ -146,15 +144,22 @@ port, but there is a [browser demo](https://radar-demo.stoatworks-labs.com/)
 
 ### In Resolume Arena, on Windows
 
-On Windows both plugins have been loaded, at v0.1.0, before the sprites. A build of this source (the DLLs release.yml built
-from the registered tree) loads, registers and renders in Resolume Arena 7.27.1 on software
-rendering (win-lab, Mesa llvmpipe, no GPU, no sound device), with every control matching what
-the plugins declare (29 and 27 host controls) and Arena's log clean, in the fleet's Arena gate:
-15 of 15 checks, with the audio rows skipped. The sweep turns, so no two grabs of the picture
-are alike, which puts the gate's noise floor high, and it could only confirm some controls one
-at a time: 10 of the source's 21 valued controls and 9 of the effect's 20, with the rest
-inconclusive (none dead). The harness's own sweep (every one of the 43 parameters moves the
-picture) covers the rest. Software rendering says nothing about a GPU or about speed.
+A build of this code (CI's MSVC DLLs from 67e189c, the same but for the version number)
+loads, registers and renders in Resolume Arena 7.27.1 on software rendering (win-lab, Mesa
+llvmpipe, no GPU, no sound device), with every control matching what the plugins declare (40 and
+38 host controls) and Arena's log clean, in the fleet's Arena gate: 17 of 17 checks, with the
+audio rows skipped, and the test alien loaded as the Sprite File in both. The sweep turns, so no
+two grabs of the picture are alike, which puts the gate's noise floor high, and it could only
+confirm some controls one at a time: 12 of the source's 32 valued controls (Sprite Size and Grow
+On Approach among them) and 8 of the effect's 31, with the rest inconclusive (none dead). The
+harness's own sweep (every one of the 65 parameters moves the picture) covers the rest. v0.1.0
+passed the same gate with 29 and 27 controls.
+
+The sprites were also tried by hand in SW Radar, ten of them: the built-in blip, the test alien
+as a PNG, the same PNG from a folder named with accents, emoji and katakana, a file that isn't a
+picture (the blip, and a warning in the plugin's log naming the file and why), the alien as a JPG
+(read by its brightest channel), then Hue, Saturation and Face Centre. Each one looked as the
+harness says it should. Software rendering says nothing about a GPU or about speed.
 
 ### What filming the release video found
 

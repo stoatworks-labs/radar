@@ -16,6 +16,9 @@
       "kind": "effect"
     }
   ],
+  "fixtures": {
+    "Sprite File": "arena/fixtures/radar-alien.png"
+  },
   "params": {
     "SW Radar": [
       {
@@ -188,6 +191,122 @@
         "min": 0.0,
         "max": 1.0,
         "default": 0.0
+      },
+      {
+        "name": "Sprite File",
+        "type": "ParamFile",
+        "default": "",
+        "needs": {
+          "Sprite Count": 10.0
+        },
+        "note": "the fixture is the repo's tools/fixtures/alien.png; empty is the built-in blip"
+      },
+      {
+        "name": "Sprite Threshold",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5,
+        "needs": {
+          "Sprite Count": 10.0
+        },
+        "declared": "Sprite Threshold"
+      },
+      {
+        "name": "Sprite Count",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 32.0,
+        "default": 0,
+        "probe": [
+          4,
+          16
+        ]
+      },
+      {
+        "name": "Sprite Size",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5,
+        "needs": {
+          "Sprite Count": 10.0
+        }
+      },
+      {
+        "name": "Sprite Speed",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.4768921732902527,
+        "needs": {
+          "Sprite Count": 10.0
+        }
+      },
+      {
+        "name": "Speed Spread",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.3499999940395355,
+        "needs": {
+          "Sprite Count": 10.0
+        }
+      },
+      {
+        "name": "Stability",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.75,
+        "needs": {
+          "Sprite Count": 10.0
+        }
+      },
+      {
+        "name": "Orientation",
+        "type": "ParamChoice",
+        "default": "Upright",
+        "needs": {
+          "Sprite Count": 10.0
+        },
+        "note": "needs an asymmetric Sprite File to show: the fixture is one"
+      },
+      {
+        "name": "Hue",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0,
+        "needs": {
+          "Sprite Count": 10.0
+        },
+        "probe": [
+          0.33,
+          0.67
+        ],
+        "note": "0 and 1 are the same turn of the hue"
+      },
+      {
+        "name": "Saturation",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5,
+        "needs": {
+          "Sprite Count": 10.0
+        }
+      },
+      {
+        "name": "Grow On Approach",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0,
+        "needs": {
+          "Sprite Count": 10.0
+        },
+        "declared": "Grow On Approach"
       },
       {
         "name": "About",
@@ -367,6 +486,122 @@
         "min": 0.0,
         "max": 1.0,
         "default": 1.0
+      },
+      {
+        "name": "Sprite File",
+        "type": "ParamFile",
+        "default": "",
+        "needs": {
+          "Sprite Count": 10.0
+        },
+        "note": "the fixture is the repo's tools/fixtures/alien.png; empty is the built-in blip"
+      },
+      {
+        "name": "Sprite Threshold",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5,
+        "needs": {
+          "Sprite Count": 10.0
+        },
+        "declared": "Sprite Threshold"
+      },
+      {
+        "name": "Sprite Count",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 32.0,
+        "default": 0,
+        "probe": [
+          4,
+          16
+        ]
+      },
+      {
+        "name": "Sprite Size",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5,
+        "needs": {
+          "Sprite Count": 10.0
+        }
+      },
+      {
+        "name": "Sprite Speed",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.4768921732902527,
+        "needs": {
+          "Sprite Count": 10.0
+        }
+      },
+      {
+        "name": "Speed Spread",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.3499999940395355,
+        "needs": {
+          "Sprite Count": 10.0
+        }
+      },
+      {
+        "name": "Stability",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.75,
+        "needs": {
+          "Sprite Count": 10.0
+        }
+      },
+      {
+        "name": "Orientation",
+        "type": "ParamChoice",
+        "default": "Upright",
+        "needs": {
+          "Sprite Count": 10.0
+        },
+        "note": "needs an asymmetric Sprite File to show: the fixture is one"
+      },
+      {
+        "name": "Hue",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0,
+        "needs": {
+          "Sprite Count": 10.0
+        },
+        "probe": [
+          0.33,
+          0.67
+        ],
+        "note": "0 and 1 are the same turn of the hue"
+      },
+      {
+        "name": "Saturation",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5,
+        "needs": {
+          "Sprite Count": 10.0
+        }
+      },
+      {
+        "name": "Grow On Approach",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0,
+        "needs": {
+          "Sprite Count": 10.0
+        },
+        "declared": "Grow On Approach"
       },
       {
         "name": "About",

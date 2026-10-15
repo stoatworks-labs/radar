@@ -15,7 +15,7 @@ them, and moving contacts that leave the plot of their track.
 from Resolume: a harbour approach on a 24 km scope, a bay open to the north, the sweep just past
 east with the trail fading behind it.*
 
-> **Before you rely on this:** it's released at **v0.1.0**, and it's still early days. The scope is measured
+> **Before you rely on this:** it's released at **v0.2.0**, and it's still early days. The scope is measured
 > rather than asserted, by a harness that drives the real plugin classes headlessly, at two rasters
 > and on a software renderer: a point target's arc has a half-power width of Beamwidth to 0.004
 > degrees; its streak is c tau / 2 long to 8 × 10⁻⁵ of a range bin, running outward; every bearing
@@ -28,20 +28,26 @@ east with the trail fading behind it.*
 > purpose, and the synthetic sea is made to look right, not measured (see Known limits).
 > It's **never been loaded into Resolume on macOS**; the one host it's run in there is the
 > fleet's own test host, `oxbow`, for 120 frames each.
-> **The Sprites group is new since v0.1.0 and isn't in a release yet.** It's measured by the same
-> harness (what a file becomes, the threshold, the count, size and orientation off the painted
-> picture, the speed off the phosphor, the beam revealing them and the phosphor letting them go, the
-> same frame twice) and runs in the browser demo, but it has **never been loaded into Resolume**, on
-> macOS or on Windows.
-> On Windows both plugins have been loaded (v0.1.0, before the sprites). A build of this source (the DLLs release.yml built
-> from the registered tree) loads, registers and renders in Resolume Arena 7.27.1 on software
-> rendering (win-lab, Mesa llvmpipe, no GPU, no sound device), with every control matching what
-> the plugins declare (29 and 27 host controls) and Arena's log clean, in the fleet's Arena gate:
-> 15 of 15 checks, with the audio rows skipped. The sweep turns, so no two grabs of the picture
-> are alike, which puts the gate's noise floor high, and it could only confirm some controls one
-> at a time: 10 of the source's 21 valued controls and 9 of the effect's 20, with the rest
-> inconclusive (none dead). The harness's own sweep (every one of the 43 parameters moves the
-> picture) covers the rest. Software rendering says nothing about a GPU or about speed.
+> **The Sprites group is new in v0.2.0.** It's measured by the same harness (what a file becomes,
+> the threshold, the count, size and orientation off the painted picture, the speed off the
+> phosphor, the beam revealing them and the phosphor letting them go, the same frame twice), runs
+> in the browser demo, and has been in Resolume Arena on Windows (below), never on macOS.
+> A build of this code (CI's MSVC DLLs from 67e189c, the same but for the version number)
+> loads, registers and renders in Resolume Arena 7.27.1 on software rendering (win-lab, Mesa
+> llvmpipe, no GPU, no sound device), with every control matching what the plugins declare (40 and
+> 38 host controls) and Arena's log clean, in the fleet's Arena gate: 17 of 17 checks, with the
+> audio rows skipped, and the test alien loaded as the Sprite File in both. The sweep turns, so no
+> two grabs of the picture are alike, which puts the gate's noise floor high, and it could only
+> confirm some controls one at a time: 12 of the source's 32 valued controls (Sprite Size and Grow
+> On Approach among them) and 8 of the effect's 31, with the rest inconclusive (none dead). The
+> harness's own sweep (every one of the 65 parameters moves the picture) covers the rest. v0.1.0
+> passed the same gate with 29 and 27 controls.
+>
+> The sprites were also tried by hand in SW Radar, ten of them: the built-in blip, the test alien
+> as a PNG, the same PNG from a folder named with accents, emoji and katakana, a file that isn't a
+> picture (the blip, and a warning in the plugin's log naming the file and why), the alien as a JPG
+> (read by its brightest channel), then Hue, Saturation and Face Centre. Each one looked as the
+> harness says it should. Software rendering says nothing about a GPU or about speed.
 > Try it on a spare layer before you put it in a show.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human author.
@@ -221,7 +227,7 @@ whatever the clip's alpha; at 0 the clip is returned exactly, alpha and all.
 
 ## The Sprites group: your own contacts
 
-New since v0.1.0, from a request on GitHub ([radar#5](https://github.com/stoatworks-labs/radar/issues/5)):
+New in v0.2.0, from a request on GitHub ([radar#5](https://github.com/stoatworks-labs/radar/issues/5)):
 a picture of your own as the contacts, coming in from the edge of the scope to the centre. Both
 plugins have it.
 

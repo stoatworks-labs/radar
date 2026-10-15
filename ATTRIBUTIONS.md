@@ -60,6 +60,16 @@ Arrives inside the FFGL submodule, under the SDK's CustomThumbnail sample.
 
 Part of the upstream SDK tree rather than something these plugins call directly — listed because it is present in the checkout.
 
+### stb_image
+
+<https://github.com/nothings/stb>  
+Licence: MIT or Public Domain (dual, at your option)  
+Copyright: Sean Barrett
+
+Single-header decoder vendored under external/stb/ and compiled into one translation unit.
+
+Decodes PNG, JPEG and GIF. A sprite-sheet player has to open whatever the operator exported.
+
 ## Work we checked ourselves against
 
 No code was taken from these — but they were how we knew we had it right, and that is worth saying out loud.

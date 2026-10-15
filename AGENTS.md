@@ -139,7 +139,8 @@ Steve (VJPandaAU, a working VJ on Windows 11) asked for "sprites as detected
 objects": his own image as contacts closing on the centre, with a threshold, a
 count, a size, a speed, same-or-varied speeds, steady-or-wandering, upright or
 bottom-to-the-centre, hue and saturation, and optionally growth on approach.
-Built on `claude/contacts`, **not released, never loaded into any Resolume**.
+Built on `claude/contacts`, released in **v0.2.0** (2026-10-15); in Resolume Arena on Windows
+(the gate and a hand check, below), never in Resolume on macOS.
 
 **A sprite is an extended target, not an overlay.** The reflect pass samples
 each sprite's mask where it resamples the surface (a second channel, G, of the
@@ -242,11 +243,20 @@ reassociating the paint's sum), which no check's tolerance notices.
 - `--sprite-repeat` on the default source took 300 s on the software renderer:
   the coast, not the sprites. It runs over open water with clutter and noise.
 
-**Gate (plugin-bench) not updated** (out of scope here): `plugin-bench/arena/expect/radar.json`
-and its copy `docs/arena-expect.json` describe v0.1.0's 29 and 26 (27 host)
-parameters; the plugins now declare 40 and 37. `ratest --expect` drafts the new
-rows (Sprite File as `ParamFile`, the rest `needs` Sprite Count 10, Orientation
-an asymmetric fixture). Re-seed from a running Arena; don't hand-edit.
+**Gate (plugin-bench), re-seeded for v0.2.0 (2026-10-14/15):** `plugin-bench/arena/expect/radar.json`
+(and its copy `docs/arena-expect.json`) keeps v0.1.0's reviewed rows as they were and adds the
+11 sprite rows from `ratest --expect`, with `fixtures: Sprite File <- arena/fixtures/radar-alien.png`
+(this repo's alien), Sprite Count probed at 4 and 16 (not 32: llvmpipe), Hue at 0.33/0.67 (0 and 1
+are the same turn) and Grow On Approach `declared` (16 characters). `seed_expect.py` against the
+running Arena matched it exactly: 40 and 38 host controls, names, order, types, ranges, defaults.
+Gate on CI's MSVC DLLs from 67e189c: 17 passed, 0 failed, 2 skipped (audio); source live 12 (Clutter,
+Gain, Grow On Approach, Land, Persistence, Phosphor, RPM, Range, STC, Scope Size, Seed, Sprite Size),
+Over live 8 (Gain, Mix, Opacity, Persistence, Phosphor, RPM, Scope Size, Threshold), the rest
+inconclusive, none dead. Floors 1.55 levels single-grab on the source, 37.8 on the Over. The run
+took 37 min (about 15 a plugin). A first run sat silent for 3 h on a stalled ssh tunnel and then
+died with it (the Mac had slept): run it under `caffeinate -i` with a tunnel watchdog. The sprites were also driven by hand over REST in SW Radar (blip, PNG, a non-ASCII
+folder, a broken file -> blip + WARN, JPG by its brightest channel, Hue/Saturation/Face Centre),
+2026-10-13, and looked as the harness says.
 
 **The demo** ports all of it (Swarm, the mask and box filter, the culling, the
 tint); Sprite File is a choice of the blip and the two fixtures (copied into
@@ -479,7 +489,7 @@ composite's mutant moved with `glowAt()` (now `* fade` -> `/ fade`, still
     tools/fixtures/        sprite fixtures (alien.png/.jpg, panda.png, broken.png) and make_fixtures.py
     external/stb/          stb_image v2.30, the fleet's copy (shunt, flipbook, gridiron, polyhedral)
     tools/sweep.py, mutate.sh, verify.sh, glslc.sh
-    docs/arena-expect.json a DRAFT of the fleet gate's expectation (`ratest --expect`)
+    docs/arena-expect.json a copy of the fleet gate's expectation (plugin-bench's is the one read)
 
 ## What is genuinely verified, and what is assumed
 
