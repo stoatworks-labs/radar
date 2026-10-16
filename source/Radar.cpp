@@ -185,6 +185,7 @@ void pictureTintOf( const float phosphor[ 3 ], const float picture[ 3 ], float o
 
 static_assert( PT_COUNT - PT_ABOUT_TEXT == stoatworks::about::kParamCount,
                "the About run no longer matches StoatworksAbout.h" );
+static_assert( swarm::kStartAll == kMaxSprites, "Start With's top (and default) must be the swarm's \"all of them\"" );
 
 //---------------------------------------------------------------------------
 RadarPlugin::RadarPlugin( bool effect ) :

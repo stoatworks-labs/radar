@@ -202,7 +202,9 @@ the closed-form integral of `v ( 1 + a w( t ) )`, so 24 and 240 fps put a sprite
 in the same place (`--sprite-motion`: 10^-15), and the weave in bearing is a
 function of distance travelled, so a held sprite does not sway. Speed, Speed
 Spread and Stability set rates, never positions: a slider never teleports
-them. New slots (first frame, or Count raised) start staggered by the golden
+them. (Not quite true at v0.2.0: the weave's amplitude was read from Stability
+live, so a jump of Stability threw a sprite up to 0.35 rad round in bearing in
+one frame. Since v0.2.0 it is latched per generation; see below.) New slots (first frame, or Count raised) start staggered by the golden
 ratio, so the scope fills at once and they never arrive in step; respawns drop
 the frame's overshoot. Seed re-hashes bearings (positions jump: deliberate).
 
@@ -311,6 +313,14 @@ Stability), f = s / L, n and p Closing's weave draws. The envelope 4f(1 - f) is 
 0.85 and A <= 0.15 give (equality, a tangent, only at Stability 0 on the band's edge). A held
 sprite does not sway (the weave is a function of distance travelled).
 
+**The weave's share of Stability is latched per generation** (`Slot::loose`, 1 - Stability when
+the generation started), on both paths, decided after review: read live, a MIDI or OSC jump of
+Stability from 1 to 0 threw a Transit sprite up to 0.15 radii sideways in one frame (0.31 seen) and
+a Closing one 0.35 rad round in bearing (true at v0.2.0 too). The surge stays live: it is a rate.
+The latch is the same arithmetic on the same value, so at steady Stability (every default) it is
+bit-identical to the live read. `--sprite-path` jumps Stability 1 -> 0 -> 1 -> 0 between frames and
+requires nothing to move at all.
+
 **Path is latched per generation**, decided: "a control never teleports a sprite" applies to Path
 too, so a sprite in flight finishes on the path it started on and the next takes the new one. The
 cost: a change shows only as tracks end (25 s a crossing at the default speed), which the gate will
@@ -330,8 +340,11 @@ centre flips there). Head In is "top to the centre" on both paths, not "head fir
 track" (which on Transit would be "top to the south"), as Allan specified.
 
 **Start With.** When slots are made (the first frame, or Sprite Count raised), `placeNow = clamp(
-Start With - on screen now, 0, new slots )` of them go on at once at v0.2.0's golden-ratio stagger
-(StartOf( i ) of the track); the rest are latecomers. **The window** is W = 0.85 x the shortest
+Start With - on screen now, 0, new slots )` of them go on at once and the rest are latecomers.
+**The promise: from none on the scope, every sprite is on before the first one leaves.** (The first
+build kept it only for latecomers: the ones on at once took v0.2.0's golden-ratio stagger along the
+whole track, and StartOf( 1 ) = 0.927 left at 2.15 s closing and 3.3 s on Transit while the last
+latecomer came in at 10-11 s. Review found it; the check had filtered to latecomers.) **The window** is W = 0.85 x the shortest
 track / ( 3^Spread x ( 1 + 0.9 ( 1 - Stability ) ) ), in scope radii at Sprite Speed: the fastest
 any sprite can go is Speed x 3^Spread (the top of Spread's range) surging by (1 + a) at most
 (|w| <= 1), so a latecomer arriving at t >= 0 cannot leave before t + shortest / that, longer than
@@ -346,6 +359,26 @@ rest still, and a faster Speed brings them in sooner, so the promise survives a 
 flight (not a Spread or Stability raised mid-window). The arrival is exact at any frame rate: the
 frame that runs a wait out moves the sprite only for the part of the frame after the moment it ran
 out. Respawns still drop the overshoot (v0.2.0's behaviour, which the bit-exact proof needs).
+
+**One window per fill**, decided after review: a fill starts when slots are made and none is
+running, its window W counted down at Sprite Speed (`fillLeft`); every slot made until it runs out
+belongs to it, and every time a latecomer is added all those still waiting are spread over what is
+left (the j-th of m by slot in the j-th m-th). Resolume's integer slider dragged 0 -> 12 sends 1, 2,
+... 12 on successive frames; stratifying each rise on its own made every latecomer a batch of one
+waiting W u, and with seed 11 nine of them came in between 0.3 and 5.1 s of an 8.5 s window. The
+first build's single-batch law is what a fill from none in one jump still gives (`WaitOf()`).
+
+**The ones on at once, while building up** (Start With below 32, `kStartAll`), start StartOf( i ) x
+( L - 0.85 x shortest ) along: the first 15% of the radius closing, the first L - 0.896 of a chord on
+Transit. A sprite needs at least ( L - s0 ) / ( v 3^Spread ( 1 + a ) ) to leave, and with s0 <= L -
+0.85 shortest that is at least W / v from the moment it was made, so not before the fill's window
+ends, by which time every latecomer is in. At 32 nothing waits, so they keep v0.2.0's stagger along
+the whole track (bit-identical). Decided: the switch is Start With below 32, not "this rise has
+latecomers", because a dragged slider makes its first slots before any latecomer exists (Count 1,
+2, 3 at Start With 3) and they cannot be moved afterwards. The cost: Start With between Count and
+31 starts every sprite near the rim with nothing to wait for. The closest call over 108 cases
+(paths, Spread, Stability, Start With 0/3/7, jumped or dragged) is 0.25 s; the bound guarantees it
+is never negative at steady controls.
 
 **Sprite Colour.** `SpriteImage` computes, once at load from the full-size picture, the mean of the
 stored RGB weighted by the mask value (alpha, or the brightest channel): threshold-free, because
@@ -383,6 +416,11 @@ against (memory: another two RGBA32F buffers).
   now held to the harness's own statement of W (in its own share of it).
 - The browser pane hidden behind another panel never fires `requestAnimationFrame`, so the demo
   never draws; checking it needed a scratch copy of the page with a timer in its place.
+- **Three behaviour bugs got past every check, found in review** (2026-10-16): the promise broken
+  for 2 <= Start With < Count (the check looked only at latecomers), Stability moving sprites (no
+  check jumped a control between frames), and a dragged Count clumping the arrivals (every check
+  raised Count in one step). Each now has a check that fails on the first build's rule, kept as a
+  negative control, and the promise check covers every sprite, Count jumped and dragged.
 
 ## Decisions taken without asking
 
@@ -549,6 +587,7 @@ a macOS runner has no accelerated GL.
 | `--sprite-colour` Picture | 1e-4 in chromaticity; bit-exact fallback | as `--sprite-colour` | both |
 | `--sprite-file` colour | 1e-6 | a float of a double mean of 8-bit values | CPU decode |
 | `--sprite-path` | 1e-9; Kolmogorov-Smirnov 1% (1.63 / sqrt n) | double sums of frame lengths; the hash is uniform, KS at 1% | CPU (CI runs it) |
+| `--sprite-path` promise, drag, Stability jump | last in < first out; each in its own ninth of what was left (within a frame); exactly 0 | the stated laws, on the CPU, in double; a latched value cannot move | CPU (CI runs it) |
 
 **Resize mid-run.** The phosphor, the reflectivity, the kernel and the map are
 sized by constants, never by the host's raster, and the per-column timing is
@@ -560,8 +599,8 @@ because the day someone makes a buffer raster-sized it will catch it.
 
 `ratest --negative` sets one wrong MODEL at a time -- a test hook in the plugin,
 so the shipped shader computes the wrong thing -- and requires the check to
-fail. All 28 are detected (11 since v0.1.0, 9 for the sprites, 8 for the
-controls added since v0.2.0):
+fail. All 32 are detected (11 since v0.1.0, 9 for the sprites, 8 for the
+controls added since v0.2.0, 4 for the three rules review found):
 
 | check | the wrong model |
 | --- | --- |
@@ -593,6 +632,10 @@ controls added since v0.2.0):
 | `--sprite-transit` | Transit's sprites grow by the share of the track done, not by range |
 | `--sprite-arrivals` | the latecomers over one crossing at Sprite Speed (as above) |
 | `--sprite-arrivals` | the sprites' seed salted from the wall clock |
+| `--sprite-path` | the ones on at once staggered along the whole track, latecomers or not (the first build's rule) |
+| `--sprite-arrivals` | the same |
+| `--sprite-path` | the weave read live from Stability every frame (v0.2.0's and the first build's rule) |
+| `--sprite-path` | each rise's latecomers stratified on their own (the first build's rule) |
 
 ### The recorded mutation
 
@@ -614,7 +657,9 @@ Transit running north (`half - along` -> `half + along`, `--sprite-path`), the
 latecomers' window over a crossing (`kArrivalShare = 0.85` -> `1.85`,
 `--sprite-arrivals`), Head In mirrored (`-std::sin` -> `+std::sin`, `--sprites`)
 and the picture's colour all blue channel (`p[ c ]` -> `p[ 2 ]`, `--sprite-file`).
-Ten of ten.
+After review, one more: the ones on at once past the first stretch of their track
+(`length - kArrivalShare` -> `length + kArrivalShare`, `--sprite-path`). Eleven of
+eleven.
 
 ## Shape of the code
 

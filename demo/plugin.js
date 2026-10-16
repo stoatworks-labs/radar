@@ -302,9 +302,12 @@ class Sea {
 // from the rim on a hashed bearing to the centre. Transit: the radar heading
 // north through still objects, so each sprite comes in at the top at a hashed
 // x across the middle 85% of the scope, runs straight down that chord and
-// leaves at the bottom rim. A path is latched per generation. Start With
-// below Sprite Count makes the rest latecomers, each waiting a hashed
-// distance (counted down at Sprite Speed) inside its own share of the window.
+// leaves at the bottom rim. A path, and the weave's share of Stability, are
+// latched per generation. Start With below Sprite Count makes the rest
+// latecomers: one window per fill (however Sprite Count got there), counted
+// down at Sprite Speed, with every waiting latecomer spread over what is left
+// of it; below "all of them" the ones on at once keep to the first stretch of
+// their track, so nobody leaves before the last latecomer is in.
 //===========================================================================
 
 const PATH_CLOSING = 0;
@@ -312,7 +315,7 @@ const PATH_TRANSIT = 1;
 const kTransitBand = 0.85;
 const kTransitWeave = 0.15;
 const kArrivalShare = 0.85;
-const kStartAll = 1 << 30;
+const kStartAll = 32;
 
 function drawOf(seed, slot, generation) {
   const base = Pcg(u32(Math.imul(seed, 2246822519) + Math.imul(slot, 3266489917) + Math.imul(generation, 668265263) + 374761393));
@@ -339,6 +342,22 @@ class Swarm {
   constructor() {
     this.slots = [];
     this.last = { count: 0, seed: 0, speed: 0, spread: 0, stability: 1, path: PATH_CLOSING, startWith: kStartAll };
+    this.fillLeft = 0;
+  }
+
+  /** A generation starts: latch its path and its weave's share of Stability. */
+  static startGeneration(slot, s) {
+    slot.path = s.path;
+    slot.loose = 1.0 - Math.min(1, Math.max(0, s.stability));
+  }
+
+  /** Every latecomer still waiting, spread over what is left of the fill. */
+  spreadWaits(s) {
+    const waiting = [];
+    this.slots.forEach((slot, i) => { if (slot.wait > 0) waiting.push(i); });
+    waiting.forEach((i, j) => {
+      this.slots[i].wait = (this.fillLeft * (j + drawOf(s.seed, i, 0).arrive)) / waiting.length;
+    });
   }
 
   static speedOf(s, slot, generation) {
@@ -366,10 +385,6 @@ class Swarm {
     return (kArrivalShare * shortestTrack(s.path)) / fastest;
   }
 
-  static waitOf(s, slot, nth, of) {
-    return (Swarm.arrivalWindow(s) * (nth + drawOf(s.seed, slot, 0).arrive)) / Math.max(of, 1);
-  }
-
   waiting() {
     return this.slots.reduce((n, slot) => n + (slot.wait > 0 ? 1 : 0), 0);
   }
@@ -379,19 +394,28 @@ class Swarm {
     const count = Math.max(s.count, 0);
     while (this.slots.length > count) this.slots.pop();
     if (this.slots.length < count) {
+      if (!(this.fillLeft > 0)) this.fillLeft = Swarm.arrivalWindow(s);
       const onScreen = this.slots.length - this.waiting();
       const fresh = count - this.slots.length;
       const placeNow = Math.min(fresh, Math.max(0, s.startWith - onScreen));
       const late = fresh - placeNow;
+      const buildUp = s.startWith < kStartAll;
       for (let made = 0; made < fresh; made += 1) {
         const i = this.slots.length;
-        const slot = { generation: 0, age: 0, travelled: 0, wait: 0, path: s.path };
-        if (made < placeNow) slot.travelled = Swarm.startOf(i) * Swarm.trackLength(s.path, s.seed, i, 0);
-        else slot.wait = Swarm.waitOf(s, i, made - placeNow, late);
+        const slot = { generation: 0, age: 0, travelled: 0, wait: 0, path: s.path, loose: 0 };
+        Swarm.startGeneration(slot, s);
+        if (made < placeNow) {
+          const length = Swarm.trackLength(s.path, s.seed, i, 0);
+          slot.travelled = Swarm.startOf(i) * (buildUp ? length - kArrivalShare * shortestTrack(s.path) : length);
+        } else {
+          slot.wait = 1.0;
+        }
         this.slots.push(slot);
       }
+      if (late > 0) this.spreadWaits(s);
     }
     if (!(dt > 0)) return;
+    if (this.fillLeft > 0) this.fillLeft = Math.max(0, this.fillLeft - Math.max(s.speed, 0) * dt);
     const a = wobbleOf(s);
     for (let i = 0; i < this.slots.length; i += 1) {
       const slot = this.slots[i];
@@ -406,9 +430,9 @@ class Swarm {
         // In at the rim at the moment its wait ran out, moving for the rest of the frame.
         move = dt - slot.wait / base;
         slot.wait = 0;
-        slot.path = s.path;
         slot.age = 0;
         slot.travelled = 0;
+        Swarm.startGeneration(slot, s);
       }
       const d = drawOf(s.seed, i, slot.generation);
       const v = Swarm.speedOf(s, i, slot.generation);
@@ -420,19 +444,19 @@ class Swarm {
         slot.generation += 1;
         slot.age = 0;
         slot.travelled = 0;
-        slot.path = s.path;
+        Swarm.startGeneration(slot, s);
       }
     }
   }
 
   sprites() {
-    const loose = 1.0 - Math.min(1, Math.max(0, this.last.stability));
-    const weave = 0.35 * loose;
-    const sway = kTransitWeave * loose;
     const out = [];
     this.slots.forEach((s, i) => {
       if (s.wait > 0) return;
       const d = drawOf(this.last.seed, i, s.generation);
+      // The weave's share of Stability as it was when this generation started.
+      const weave = 0.35 * s.loose;
+      const sway = kTransitWeave * s.loose;
       if (s.path === PATH_TRANSIT) {
         const x0 = Swarm.entryOf(this.last.seed, i, s.generation);
         const half = Math.sqrt(Math.max(0, 1.0 - x0 * x0));
@@ -1246,7 +1270,7 @@ const PARAMS = [
   opt('path', 'Path', ['Closing', 'Transit'], 'Sprites',
     'Closing: in from the rim to the centre. Transit: the radar heading north through still objects, so they come in at the top and slide straight down and out at the bottom. A sprite already on its way finishes on the path it started on.'),
   opt('startWith', 'Start With', Array.from({ length: kMaxSprites + 1 }, (_, i) => String(i)), 'Sprites',
-    'How many are on the scope when the sprites start (or Sprite Count goes up); the rest come in at the rim one by one, all of them in before the first one leaves. 32, the default, is all of them at once.'),
+    'How many are on the scope when the sprites start (or Sprite Count goes up); the rest come in at the rim one by one, all of them in before the first one leaves, and the ones on at once start near the rim (the top, on Transit) so they can’t leave early. 32, the default, is all of them at once, spread along the way in.'),
   opt('spriteColour', 'Sprite Colour', ['Phosphor', 'Picture'], 'Sprites',
     'Phosphor: the phosphor’s own colours. Picture: the picture’s average colour, at the phosphor’s brightness (the blip and grey pictures stay Phosphor). Hue and Saturation act on either.'),
 ];
