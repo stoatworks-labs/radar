@@ -149,6 +149,7 @@ const StabilityFromParam = (v) => clamp01(v);
 const SpriteHueFromParam = (v) => clamp01(v);
 const SpriteSaturationFromParam = (v) => clamp01(v);
 const SpriteGrowFromParam = (v) => clamp01(v);
+const SpriteStartFromParam = (v) => Math.min(kMaxSprites, Math.max(0, lround(v)));
 /** FlashTauFor: P7, P19, Green. */
 const FlashTauFor = (phosphor) => (phosphor === 1 ? 0.025 : phosphor === 2 ? 0.06 : 0.035);
 /** std::lround then clamp; lround rounds half away from zero. */
@@ -297,8 +298,21 @@ class Sea {
 }
 
 //===========================================================================
-// Swarm.cpp, ported: the sprites' motion, in from the rim on the host's clock.
+// Swarm.cpp, ported: the sprites' motion on the host's clock. Closing: in
+// from the rim on a hashed bearing to the centre. Transit: the radar heading
+// north through still objects, so each sprite comes in at the top at a hashed
+// x across the middle 85% of the scope, runs straight down that chord and
+// leaves at the bottom rim. A path is latched per generation. Start With
+// below Sprite Count makes the rest latecomers, each waiting a hashed
+// distance (counted down at Sprite Speed) inside its own share of the window.
 //===========================================================================
+
+const PATH_CLOSING = 0;
+const PATH_TRANSIT = 1;
+const kTransitBand = 0.85;
+const kTransitWeave = 0.15;
+const kArrivalShare = 0.85;
+const kStartAll = 1 << 30;
 
 function drawOf(seed, slot, generation) {
   const base = Pcg(u32(Math.imul(seed, 2246822519) + Math.imul(slot, 3266489917) + Math.imul(generation, 668265263) + 374761393));
@@ -312,15 +326,19 @@ function drawOf(seed, slot, generation) {
     p2: 2.0 * kPi * h(6),
     weaves: 1.5 + 1.5 * h(7),
     p3: 2.0 * kPi * h(8),
+    arrive: h(9),
+    entry: 2.0 * h(10) - 1.0,
   };
 }
 
 const wobbleIntegral = (d, t) => -0.6 * Math.cos(d.w1 * t + d.p1) / d.w1 - 0.4 * Math.cos(d.w2 * t + d.p2) / d.w2;
+const wobbleOf = (s) => 0.9 * (1.0 - Math.min(1, Math.max(0, s.stability)));
+const shortestTrack = (path) => (path === PATH_TRANSIT ? 2.0 * Math.sqrt(1.0 - kTransitBand * kTransitBand) : 1.0);
 
 class Swarm {
   constructor() {
     this.slots = [];
-    this.last = { count: 0, seed: 0, speed: 0, spread: 0, stability: 1 };
+    this.last = { count: 0, seed: 0, speed: 0, spread: 0, stability: 1, path: PATH_CLOSING, startWith: kStartAll };
   }
 
   static speedOf(s, slot, generation) {
@@ -332,40 +350,111 @@ class Swarm {
     return v - Math.floor(v);
   }
 
+  static entryOf(seed, slot, generation) {
+    return kTransitBand * drawOf(seed, slot, generation).entry;
+  }
+
+  static trackLength(path, seed, slot, generation) {
+    if (path !== PATH_TRANSIT) return 1.0;
+    const x = Swarm.entryOf(seed, slot, generation);
+    return 2.0 * Math.sqrt(Math.max(0, 1.0 - x * x));
+  }
+
+  /** 85% of the shortest track at the fastest a sprite can go, in radii at Sprite Speed. */
+  static arrivalWindow(s) {
+    const fastest = Math.pow(3.0, Math.min(1, Math.max(0, s.spread))) * (1.0 + wobbleOf(s));
+    return (kArrivalShare * shortestTrack(s.path)) / fastest;
+  }
+
+  static waitOf(s, slot, nth, of) {
+    return (Swarm.arrivalWindow(s) * (nth + drawOf(s.seed, slot, 0).arrive)) / Math.max(of, 1);
+  }
+
+  waiting() {
+    return this.slots.reduce((n, slot) => n + (slot.wait > 0 ? 1 : 0), 0);
+  }
+
   step(dt, s) {
     this.last = s;
     const count = Math.max(s.count, 0);
     while (this.slots.length > count) this.slots.pop();
-    while (this.slots.length < count) this.slots.push({ generation: 0, age: 0, travelled: Swarm.startOf(this.slots.length) });
+    if (this.slots.length < count) {
+      const onScreen = this.slots.length - this.waiting();
+      const fresh = count - this.slots.length;
+      const placeNow = Math.min(fresh, Math.max(0, s.startWith - onScreen));
+      const late = fresh - placeNow;
+      for (let made = 0; made < fresh; made += 1) {
+        const i = this.slots.length;
+        const slot = { generation: 0, age: 0, travelled: 0, wait: 0, path: s.path };
+        if (made < placeNow) slot.travelled = Swarm.startOf(i) * Swarm.trackLength(s.path, s.seed, i, 0);
+        else slot.wait = Swarm.waitOf(s, i, made - placeNow, late);
+        this.slots.push(slot);
+      }
+    }
     if (!(dt > 0)) return;
-    const a = 0.9 * (1.0 - Math.min(1, Math.max(0, s.stability)));
+    const a = wobbleOf(s);
     for (let i = 0; i < this.slots.length; i += 1) {
       const slot = this.slots[i];
+      let move = dt;
+      if (slot.wait > 0) {
+        const base = Math.max(s.speed, 0);
+        const step = base * dt;
+        if (step < slot.wait) {
+          slot.wait -= step;
+          continue;
+        }
+        // In at the rim at the moment its wait ran out, moving for the rest of the frame.
+        move = dt - slot.wait / base;
+        slot.wait = 0;
+        slot.path = s.path;
+        slot.age = 0;
+        slot.travelled = 0;
+      }
       const d = drawOf(s.seed, i, slot.generation);
       const v = Swarm.speedOf(s, i, slot.generation);
       const t0 = slot.age;
-      const t1 = slot.age + dt;
-      slot.travelled += v * (dt + (a > 0 ? a * (wobbleIntegral(d, t1) - wobbleIntegral(d, t0)) : 0));
+      const t1 = slot.age + move;
+      slot.travelled += v * (move + (a > 0 ? a * (wobbleIntegral(d, t1) - wobbleIntegral(d, t0)) : 0));
       slot.age = t1;
-      if (slot.travelled >= 1.0) {
+      if (slot.travelled >= Swarm.trackLength(slot.path, s.seed, i, slot.generation)) {
         slot.generation += 1;
         slot.age = 0;
         slot.travelled = 0;
+        slot.path = s.path;
       }
     }
   }
 
   sprites() {
-    const weave = 0.35 * (1.0 - Math.min(1, Math.max(0, this.last.stability)));
-    return this.slots.map((s, i) => {
+    const loose = 1.0 - Math.min(1, Math.max(0, this.last.stability));
+    const weave = 0.35 * loose;
+    const sway = kTransitWeave * loose;
+    const out = [];
+    this.slots.forEach((s, i) => {
+      if (s.wait > 0) return;
       const d = drawOf(this.last.seed, i, s.generation);
+      if (s.path === PATH_TRANSIT) {
+        const x0 = Swarm.entryOf(this.last.seed, i, s.generation);
+        const half = Math.sqrt(Math.max(0, 1.0 - x0 * x0));
+        const length = 2.0 * half;
+        const along = Math.min(s.travelled, length);
+        const f = length > 0 ? along / length : 1.0;
+        let x = x0;
+        if (sway > 0) x += sway * 4.0 * f * (1.0 - f) * Math.sin(2.0 * kPi * d.weaves * along + d.p3);
+        const y = half - along;
+        let b = Math.atan2(x, y);
+        if (b < 0) b += 2.0 * kPi;
+        out.push({ x, y, range: Math.hypot(x, y), bearing: b, progress: f, path: PATH_TRANSIT });
+        return;
+      }
       let b = d.bearing;
       if (weave > 0) b += weave * Math.sin(2.0 * kPi * d.weaves * s.travelled + d.p3);
       b %= 2.0 * kPi;
       if (b < 0) b += 2.0 * kPi;
       const range = Math.max(0, 1.0 - s.travelled);
-      return { x: range * Math.sin(b), y: range * Math.cos(b), range, bearing: b };
+      out.push({ x: range * Math.sin(b), y: range * Math.cos(b), range, bearing: b, progress: Math.min(1, s.travelled), path: PATH_CLOSING });
     });
+    return out;
   }
 }
 
@@ -386,7 +475,7 @@ const BUILT_IN = (() => {
       value[y * n + x] = Math.max(0, 1 - Math.sqrt(u * u + v * v) / 0.5);
     }
   }
-  return { width: n, height: n, value };
+  return { width: n, height: n, value, colour: [0, 0, 0], coloured: false };
 })();
 
 /** Every row of a w x h grid from w to newW texels, area-weighted. */
@@ -418,7 +507,7 @@ function transpose(input, w, h) {
 
 function reduceMask(value, width, height) {
   const longer = Math.max(width, height);
-  if (longer <= kMaxMaskSide) return { width, height, value };
+  if (longer <= kMaxMaskSide) return { width, height, value: Float32Array.from(value) };
   const scale = kMaxMaskSide / longer;
   const newW = Math.max(1, lround(width * scale));
   const newH = Math.max(1, lround(height * scale));
@@ -427,19 +516,38 @@ function reduceMask(value, width, height) {
   return { width: newW, height: newH, value: transpose(down, newH, newW) };
 }
 
-/** A decoded picture (straight RGBA, top row first) as the plugin's mask. */
+/** SpriteImage.h: a mean colour with less HSV saturation than this is grey. */
+const kGreySaturation = 0.05;
+const isColoured = (c) => {
+  const high = Math.max(c[0], c[1], c[2]);
+  return high > 0 && (high - Math.min(c[0], c[1], c[2])) / high >= kGreySaturation;
+};
+
+/**
+ * A decoded picture (straight RGBA, top row first) as the plugin's mask, and
+ * its colour for Sprite Colour's Picture: the mean RGB, each pixel weighted by
+ * its mask value (alpha, or the brightest channel).
+ */
 function maskFromPixels(rgba, width, height) {
   let transparent = false;
   for (let i = 3; i < rgba.length && !transparent; i += 4) transparent = rgba[i] < 255;
   const full = new Float32Array(width * height);
+  const sum = [0, 0, 0];
+  let weight = 0;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const o = (y * width + x) * 4;
       const v = transparent ? rgba[o + 3] : Math.max(rgba[o], rgba[o + 1], rgba[o + 2]);
       full[(height - 1 - y) * width + x] = v / 255;
+      const m = v / 255;
+      for (let c = 0; c < 3; c += 1) sum[c] += m * (rgba[o + c] / 255);
+      weight += m;
     }
   }
-  return reduceMask(full, width, height);
+  const mask = reduceMask(full, width, height);
+  mask.colour = weight > 0 ? sum.map((s) => f32(s / weight)) : [0, 0, 0];
+  mask.coloured = weight > 0 && isColoured(mask.colour);
+  return mask;
 }
 
 /** A Blob (a fetched fixture or a file of yours) to a mask, or a reason. */
@@ -470,6 +578,13 @@ function tintOf(colour, hueTurns, saturation) {
     const turned = v * c + cross[i] * s + mean * (1.0 - c);
     return f32(Math.max(0, mean + (turned - mean) * 2.0 * saturation));
   });
+}
+
+/** Radar.cpp's pictureTintOf: the picture's colour at the phosphor colour's channel mean. */
+function pictureTintOf(phosphor, picture) {
+  const want = (phosphor[0] + phosphor[1] + phosphor[2]) / 3.0;
+  const have = (picture[0] + picture[1] + picture[2]) / 3.0;
+  return picture.map((c) => f32(have > 0 ? (c * want) / have : 0));
 }
 
 /** The page's sprite pictures: the plugin's blip and the repository's fixtures. */
@@ -702,6 +817,8 @@ function createRenderer(gl, quad) {
         speed: SpriteSpeedFromParam(params.get('spriteSpeed')),
         spread: SpeedSpreadFromParam(params.get('speedSpread')),
         stability: StabilityFromParam(params.get('stability')),
+        path: OptionIndex(params.get('path'), 2) === 1 ? PATH_TRANSIT : PATH_CLOSING,
+        startWith: SpriteStartFromParam(params.get('startWith')),
       });
       const spriteChoice = OptionIndex(params.get('sprite'), SPRITE_PICTURES.length);
       const mask = maskFor(spriteChoice);
@@ -710,17 +827,21 @@ function createRenderer(gl, quad) {
       {
         const size = SpriteSizeFromParam(params.get('spriteSize'));
         const grow = SpriteGrowFromParam(params.get('grow'));
-        const faceCentre = OptionIndex(params.get('orientation'), 2) === 1;
+        // Upright, Face Centre (bottom to the centre), Head In (top to the centre).
+        const orientation = OptionIndex(params.get('orientation'), 3);
+        const turn = orientation === 1 ? 1.0 : orientation === 2 ? -1.0 : 0.0;
         const longer = Math.max(1, mask.width, mask.height);
         for (const placed of st.swarm.sprites()) {
+          // Grow On Approach is a law of the range on either path: on Transit a
+          // sprite is biggest at its closest approach to the centre.
           const side = size * (1.0 + kSpriteGrowth * grow * (1.0 - Math.min(1, Math.max(0, placed.range))));
           spriteDraws.push({
             x: placed.x,
             y: placed.y,
             hx: 0.5 * side * (mask.width / longer),
             hy: 0.5 * side * (mask.height / longer),
-            upSin: faceCentre ? Math.sin(placed.bearing) : 0.0,
-            upCos: faceCentre ? Math.cos(placed.bearing) : 1.0,
+            upSin: turn !== 0 ? turn * Math.sin(placed.bearing) : 0.0,
+            upCos: turn !== 0 ? turn * Math.cos(placed.bearing) : 1.0,
             range: placed.range,
             bearing: placed.bearing,
           });
@@ -972,10 +1093,15 @@ function createRenderer(gl, quad) {
         {
           const hue = SpriteHueFromParam(params.get('hue'));
           const saturation = SpriteSaturationFromParam(params.get('saturation'));
-          const tint = (hue > 0 && hue < 1) || saturation !== 0.5;
+          // Sprite Colour's Picture: the picture's colour at the phosphor's
+          // brightness, unless it has none to give (the blip, a grey picture).
+          const picture = OptionIndex(params.get('spriteColour'), 2) === 1 && mask.coloured;
+          const tint = picture || (hue > 0 && hue < 1) || saturation !== 0.5;
+          const baseFlash = picture ? pictureTintOf(look.flash, mask.colour) : look.flash;
+          const baseAfter = picture ? pictureTintOf(look.after, mask.colour) : look.after;
           p.setInt('SpriteTint', tint ? 1 : 0);
-          p.set('SpriteFlashColour', ...(tint ? tintOf(look.flash, hue, saturation) : look.flash));
-          p.set('SpriteAfterColour', ...(tint ? tintOf(look.after, hue, saturation) : look.after));
+          p.set('SpriteFlashColour', ...(tint ? tintOf(baseFlash, hue, saturation) : look.flash));
+          p.set('SpriteAfterColour', ...(tint ? tintOf(baseAfter, hue, saturation) : look.after));
           p.setInt('SpriteNoFadeForTest', 0);
           p.setInt('PolarSpritesForTest', 0);
         }
@@ -995,6 +1121,7 @@ function createRenderer(gl, quad) {
         painted: wedge.count,
         targets: targets.length,
         sprites: spriteDraws.length,
+        waiting: st.swarm.waiting(),
         spriteNote,
         rangeKm,
         ringKm: ringSpacingKm(rangeKm),
@@ -1019,6 +1146,8 @@ const SPRITE_DEFAULTS = {
   sprite: 0, spriteThreshold: 0.5, spriteCount: 0, spriteSize: ParamFromSpriteSize(0.1),
   spriteSpeed: ParamFromSpriteSpeed(0.04), speedSpread: 0.35, stability: 0.75, orientation: 0,
   hue: 0, saturation: 0.5, grow: 0,
+  // Since v0.2.0, at what v0.2.0 did: Closing, all of them at once, the phosphor's colours.
+  path: 0, startWith: kMaxSprites, spriteColour: 0,
 };
 
 /**
@@ -1106,14 +1235,20 @@ const PARAMS = [
     '0: all at Sprite Speed. 1: each at its own, a third to three times it.'),
   std('stability', 'Stability', 'Sprites', (v) => fmt(StabilityFromParam(v), 2),
     '1: each travels at a steady speed, straight in. 0: their speed surges and sags and they weave in bearing.'),
-  opt('orientation', 'Orientation', ['Upright', 'Face Centre'], 'Sprites',
-    'Upright: every sprite’s top towards the top of the screen. Face Centre: its bottom towards the centre.'),
+  opt('orientation', 'Orientation', ['Upright', 'Face Centre', 'Head In'], 'Sprites',
+    'Upright: every sprite’s top towards the top of the screen. Face Centre: its bottom towards the centre. Head In: its top towards the centre. On Transit the last two turn a sprite as it passes the centre.'),
   std('hue', 'Hue', 'Sprites', (v) => `${Math.round(SpriteHueFromParam(v) * 360)}°`,
     'Turns the phosphor’s colours for the sprites, 0 to 360°. 0 is the phosphor’s own.'),
   std('saturation', 'Saturation', 'Sprites', (v) => `${fmt(2 * SpriteSaturationFromParam(v), 2)}× chroma`,
     'The sprites’ chroma against the phosphor’s: 0 grey, 0.5 the phosphor’s own, 1 twice it.'),
   std('grow', 'Grow On Approach', 'Sprites', (v) => `${fmt(1 + 3 * SpriteGrowFromParam(v), 2)}× at the centre`,
-    '0: the same size all the way in. 1: four times the size at the centre, growing linearly.'),
+    '0: the same size all the way in. 1: four times the size at the centre, growing linearly. On Transit a sprite grows to its closest approach and shrinks again.'),
+  opt('path', 'Path', ['Closing', 'Transit'], 'Sprites',
+    'Closing: in from the rim to the centre. Transit: the radar heading north through still objects, so they come in at the top and slide straight down and out at the bottom. A sprite already on its way finishes on the path it started on.'),
+  opt('startWith', 'Start With', Array.from({ length: kMaxSprites + 1 }, (_, i) => String(i)), 'Sprites',
+    'How many are on the scope when the sprites start (or Sprite Count goes up); the rest come in at the rim one by one, all of them in before the first one leaves. 32, the default, is all of them at once.'),
+  opt('spriteColour', 'Sprite Colour', ['Phosphor', 'Picture'], 'Sprites',
+    'Phosphor: the phosphor’s own colours. Picture: the picture’s average colour, at the phosphor’s brightness (the blip and grey pictures stay Phosphor). Hue and Saturation act on either.'),
 ];
 for (const p of PARAMS) p.default = DEFAULTS[initialVariant][p.id];
 
@@ -1154,7 +1289,7 @@ const mounted = mountDemo({
     'The CPU half is a PORT, not the plugin’s code, and nothing checks it but a reader. The antenna’s position in double and the crossed-bin rule (Sweep.h), the per-column crossing timing that gives the Carry and Fade textures (Radar.cpp), the clock’s jump rule, the contacts and the rain’s drift (World.cpp), the sprites’ motion (Swarm.cpp), their mask and its box filter (SpriteImage.cpp), the band culling and the sprites’ tint (Radar.cpp), every control’s conversion (Controls.cpp), the ring spacing, the phosphor colours and the sinc half-power point are translated to JavaScript here. The repository’s ratest --sweep, --sweep-law, --persist and --clock check the C++ and have never heard of this page.',
     'The GPU half is not a port: the kernel, map, reflect, paint and composite passes are the plugin’s own GLSL, at the plugin’s own buffer sizes and formats (a 2048 × 1024 32-bit float phosphor), and demo/tools/check_shaders.py fails the repository’s verify script if a character of them drifts. The GLSL keeps the plugin’s bounded sine, cosine and bearingOf; the browser’s own trig is never used on the GPU.',
     'Nothing audio. The plugin declares an Audio FFT buffer that Resolume fills, with Audio Strobe (both plugins) and Audio Contacts (the source) over its onsets. A browser has no Resolume FFT, so all three are absent from this panel rather than present and dead. With no spectrum the plugin’s analyser never fires, so leaving them out changes nothing the page draws: no strobe spoke and no transient contact is ever made, here as in a Resolume layer with no audio.',
-    'Contacts, Seed and Sprite Count are FF_TYPE_INTEGER in the plugin (0–16, 0–9999 and 0–32). The kit has no integer control, so they are dropdowns here: Contacts and Sprite Count offer every value, Seed only 0–99. The About block is not on the panel.',
+    'Contacts, Seed, Sprite Count and Start With are FF_TYPE_INTEGER in the plugin (0–16, 0–9999, 0–32 and 0–32). The kit has no integer control, so they are dropdowns here: Contacts, Sprite Count and Start With offer every value, Seed only 0–99. The About block is not on the panel.',
     'Sprite File is a file parameter in the plugin, and the kit has no file control. Here it is a choice of the built-in blip and the repository’s two fixtures (an alien and a panda), and the button under the scope loads a PNG or JPG of your own for the chosen slot. The browser decodes it, not stb_image, and the page reduces it to the plugin’s mask (alpha, or the brightest channel when there is no transparency, box-filtered to 128 texels) with a port of the plugin’s code. Nothing you load leaves the page.',
     'Switching the Plugin dropdown is a new instance, as it would be in Resolume: the phosphor, the antenna and the sea start again, and every control goes to that plugin’s constructor default, because the two plugins declare different controls and different defaults for five of the shared ones (Gain, STC, Clutter, Heading Line, Scope Size).',
     'The clock is the page’s: seconds from frame deltas, capped at a tenth of a second a frame, so on a slow machine the antenna turns slowly rather than jumping. The plugin’s vote on whether the host sends seconds or milliseconds is not ported, because this host’s unit is known. Restart is a clock jump, which the plugin takes as no time passing, so the antenna carries on from where it was; switching the Plugin dropdown is what starts it again. Paused, a moved look control redraws the frame without advancing the antenna.',
@@ -1259,6 +1394,7 @@ if (mounted) {
           + ` · rings every ${s.ringKm} km on a ${sig(s.rangeKm)} km scope`
           + (over ? '' : ` · ${s.targets} contact${s.targets === 1 ? '' : 's'}`)
           + (s.sprites ? ` · ${s.sprites} sprite${s.sprites === 1 ? '' : 's'}` : '')
+          + (s.waiting ? ` (${s.waiting} still to come in)` : '')
           + (s.spriteNote ? ` · ${s.spriteNote}` : '');
       }, 250);
     }
