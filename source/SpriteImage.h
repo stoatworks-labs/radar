@@ -25,6 +25,16 @@
     Rows are stored BOTTOM FIRST, GL's order: texel ( x, y ) with y = 0 is the
     bottom row of the picture.
 
+    **The picture's colour** (since v0.2.0, for Sprite Colour's *Picture*):
+    the mean of its stored RGB, each pixel weighted by its mask value (alpha,
+    or the brightest channel), so a transparent or dark pixel counts for as
+    little as it is a target. Computed once, at load, from the full-size
+    picture; a threshold-free weighting, because Sprite Threshold moves live
+    and the colour does not. Encoded values, not linear light: the plugin
+    writes its output with no transfer curve, so these are the units the
+    phosphor's colours are already in. A mean whose HSV saturation is under
+    kGreySaturation is grey, and has no colour to give.
+
     This is the only file that sees stb_image or the file system. On Windows
     the host's UTF-8 path is widened to UTF-16 for `_wfopen`: a narrow `fopen`
     reads the bytes in the ANSI code page and cannot open a folder with a
@@ -38,6 +48,8 @@ constexpr int kMaxMaskSide = 128;
 constexpr int kMaxImageSide = 8192;
 /// Files are read whole; anything past this is not a sprite.
 constexpr size_t kMaxFileBytes = 64u * 1024u * 1024u;
+/// A mean colour with less HSV saturation, ( max - min ) / max, than this is grey.
+constexpr double kGreySaturation = 0.05;
 
 struct Mask
 {
@@ -45,6 +57,8 @@ struct Mask
 	int height = 0;
 	std::vector< float > value;///< width x height, rows bottom first, 0..1
 	bool fromAlpha = false;    ///< alpha, or (false) the brightest channel
+	float colour[ 3 ] = { 0.0f, 0.0f, 0.0f };///< the picture's mean RGB, weighted by the mask
+	bool coloured     = false;///< that mean is not grey (the blip has none)
 };
 
 struct Loaded
@@ -60,6 +74,9 @@ struct Loaded
 /// Sprite Threshold T leaves a disc Sprite Size x (1 - T) across, which is
 /// what `ratest --sprite-threshold` measures.
 const Mask& BuiltIn();
+
+/// Whether a mean colour is far enough from grey to tint anything.
+bool IsColoured( const float colour[ 3 ] );
 
 /// The picture's bytes, decoded and reduced to a mask. Never throws.
 Loaded Decode( const unsigned char* bytes, size_t size );

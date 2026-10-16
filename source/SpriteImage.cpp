@@ -153,6 +153,9 @@ Loaded Decode( const unsigned char* bytes, size_t size )
 			transparent = pixels[ i * 4 + 3 ] < 255;
 
 	std::vector< float > full( static_cast< size_t >( w ) * h );
+	//The picture's colour: its RGB, each pixel weighted by how much it is a
+	//target (the mask value, before any threshold), in double.
+	double sum[ 3 ] = { 0.0, 0.0, 0.0 }, weight = 0.0;
 	for( int y = 0; y < h; ++y )
 	{
 		//stb gives the top row first; the mask is bottom first.
@@ -163,14 +166,29 @@ Loaded Decode( const unsigned char* bytes, size_t size )
 			const stbi_uc* p = row + static_cast< size_t >( x ) * 4;
 			const int v      = transparent ? p[ 3 ] : std::max( { p[ 0 ], p[ 1 ], p[ 2 ] } );
 			out[ x ]         = static_cast< float >( v ) / 255.0f;
+			const double m   = v / 255.0;
+			for( int c = 0; c < 3; ++c )
+				sum[ c ] += m * ( p[ c ] / 255.0 );
+			weight += m;
 		}
 	}
 	stbi_image_free( pixels );
 
 	result.mask           = Reduce( full, w, h, kMaxMaskSide );
 	result.mask.fromAlpha = transparent;
-	result.ok             = true;
+	if( weight > 0.0 )
+		for( int c = 0; c < 3; ++c )
+			result.mask.colour[ c ] = static_cast< float >( sum[ c ] / weight );
+	result.mask.coloured = weight > 0.0 && IsColoured( result.mask.colour );
+	result.ok            = true;
 	return result;
+}
+
+bool IsColoured( const float colour[ 3 ] )
+{
+	const double high = std::max( { colour[ 0 ], colour[ 1 ], colour[ 2 ] } );
+	const double low  = std::min( { colour[ 0 ], colour[ 1 ], colour[ 2 ] } );
+	return high > 0.0 && ( high - low ) / high >= kGreySaturation;
 }
 
 bool Utf8ToUtf16( const std::string& in, std::u16string& out )

@@ -18,6 +18,10 @@ vectrix's lesson, a control can be alive, correct and still useless.
 Every render is 320x180 (CI's raster) and 160 frames at 60 fps: one rotation of
 the default 24 rpm antenna and a little more, so every bearing has been painted.
 Sprite File is swept from empty (the built-in blip) to tools/fixtures/alien.png.
+Since v0.2.0: Path (Closing to Transit) and Start With (none on at the start to
+all of them) act only on sprites that start, so both are set from the first
+frame with ten sprites on; Sprite Colour (Phosphor to Picture) needs a coloured
+picture, the alien; Orientation is swept from Upright to Head In.
 
 Usage::
 
@@ -75,10 +79,13 @@ SWEEP = {
     "Sprite Speed": ("0", "1", SPRITES, []),
     "Speed Spread": ("0", "1", SPRITES + ["Sprite Speed=0.8"], []),
     "Stability": ("0", "1", SPRITES + ["Sprite Speed=0.8"], []),
-    "Orientation": ("0", "1", SPRITES + ["Sprite File=" + ALIEN, "Sprite Size=0.7"], []),
+    "Orientation": ("0", "2", SPRITES + ["Sprite File=" + ALIEN, "Sprite Size=0.7"], []),
     "Hue": ("0", "0.5", SPRITES, []),
     "Saturation": ("0", "1", SPRITES, []),
     "Grow On Approach": ("0", "1", SPRITES, []),
+    "Path": ("0", "1", SPRITES, []),
+    "Start With": ("0", "32", SPRITES, []),
+    "Sprite Colour": ("0", "1", SPRITES + ["Sprite File=" + ALIEN, "Sprite Size=0.7"], []),
 }
 
 # Parameters with no pixel to sweep: the FFT buffer (its float is meaningless;
