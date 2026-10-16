@@ -152,7 +152,7 @@ seconds in: each one is sliding south with its old paints stacked above it. Rend
 **v0.2.0 adds the sprites ([radar#5](https://github.com/stoatworks-labs/radar/issues/5)).**
 They've been in Resolume Arena on Windows (below), never in Resolume on macOS.
 
-**Since v0.2.0, on `main` but not released:** Path, Start With, Head In and Sprite
+**Since v0.2.0, in the source but not released:** Path, Start With, Head In and Sprite
 Colour, from Steve's replies on radar#5. They're measured by the harness (below) and run
 in the browser demo, and **they haven't been in Resolume at all yet**, on either platform.
 With every new control at its default the plugins render v0.2.0's picture to the bit:
@@ -230,8 +230,8 @@ shared with other builds): **SW Radar 0.34 ms at 720p, 0.39 at 1080p, 0.74 at
 GPU paints only the wedge the antenna swept; the decay is timed per bearing on
 the CPU. Sixteen sprites add nothing measurable to those numbers on this GPU; on
 Apple's software renderer twelve big ones cost about an eighth of a second a frame at 320x180.
-At 1080p with sixteen aliens, Transit costs what Closing does: 0.42 against 0.47 ms on
-SW Radar and 0.46 against 0.58 on SW Radar Over, inside the bench's noise.
+At 1080p with sixteen aliens, Transit costs what Closing does: 0.41 against 0.43 ms on
+SW Radar and 0.47 against 0.50 on SW Radar Over, inside the bench's noise.
 
 What **isn't** verified yet:
 
@@ -318,7 +318,7 @@ The offline harness renders the real plugin classes headlessly:
     tools/mutate.sh               one character changed, a check must fail
     python3 tools/sweep.py        no control is silently dead
     ./build/ratest --bench        720p through 4K, both plugins
-    tools/verify.sh               all of it, the software renderer too, in about three minutes
+    tools/verify.sh               all of it, the software renderer too, in about seven minutes
 
 Filming uses the fleet's frame format and cue sheets:
 
