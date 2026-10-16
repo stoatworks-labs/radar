@@ -265,6 +265,125 @@ of stb_image and never sends anywhere. Checked once by eye in the desktop
 app's browser (source with aliens, Over with Face Centre pandas, no console
 errors), 2026-10-13.
 
+## Sprites since v0.2.0: Path, Start With, Head In, Sprite Colour (2026-10-16)
+
+Steve's reply on radar#5 (2026-10-15) after v0.2.0, decided with Allan: a second path (the radar
+moving north through still objects, sprites sliding off the bottom), a "start with" count that
+fills the scope over about a crossing, head-first as a third orientation, and the picture's own
+colour "if it is trivial". Built on `claude/transit`; **not released, never in Resolume**.
+
+**Parameters**, appended after Grow On Approach and before the About block in both plugins
+(`PT_SPRITE_PATH`, `PT_SPRITE_START`, `PT_SPRITE_COLOUR`), so the Sprites group stays one run and
+only the About buttons move (source 40 -> 43 declared, Over 37 -> 40):
+
+| name | type | range | default | source host index | Over host index |
+| --- | --- | --- | --- | --- | --- |
+| Path | option | Closing, Transit | Closing | 35 (new) | 32 (new) |
+| Start With | integer | 0..32 | 32 | 36 (new) | 33 (new) |
+| Sprite Colour | option | Phosphor, Picture | Phosphor | 37 (new) | 34 (new) |
+| Orientation | option | Upright, Face Centre, **Head In** | Upright | 31 (unchanged) | 28 (unchanged) |
+| About ... Support the work | | | | 35-39 -> 38-42 | 32-36 -> 35-39 |
+
+**Every default is v0.2.0's behaviour, proved bit for bit**: a v0.2.0 build of `ratest` (from
+17951d7) and this one, `--pipe` 640x360, 600 frames, sha-256 of the 8-bit stream, identical for
+the source and the Over at their defaults, with 10 blips, 10 aliens, 24 wandering tinted growing
+Face Centre aliens, 32 fast pandas, 12 Over aliens and 16 tinted Over blips, and with a cue sheet
+raising and lowering Sprite Count mid-run. No shader changed (everything new is CPU-side), the
+Closing code in `Swarm.cpp` is the same arithmetic, `drawOf()`'s eight v0.2.0 salts are untouched
+(9 and 10 are new), and Start With at 32 places every new slot exactly as v0.2.0 did.
+
+**Transit.** A slot's track is the vertical chord at x0 = 0.85 (2 h - 1), h = PCG of (seed,
+slot, generation) salt 10: from y = +sqrt(1 - x0^2) (into range at the top) down to the bottom
+rim, length L = 2 sqrt(1 - x0^2), and Speed, Spread and Stability's surge are Closing's, in scope
+radii a second, integrated in closed form the same way (`travelled` is distance along the track
+on either path). At the end of the track a new generation starts at the top. **Uniform in x, over
+the middle 85%**, decided: a slot spends time on a chord in proportion to its length, so uniform
+entry fills the band evenly in area, which is what still objects scattered over the sea would give
+a ship going north; uniform over the whole width would make edge tracks short scraps half off the
+scope (at |x| = 0.95 the chord is 0.62 radii and a 0.1 sprite is half outside all the way). The
+band keeps the shortest track 1.05 radii. Considered and rejected: a chord-length-weighted
+entry (crowds the middle), and uniform in angle (crowds the edges).
+
+**Transit's weave** is across the track, x = x0 + A 4f (1 - f) sin( 2 pi n s + p ), A = 0.15 (1 -
+Stability), f = s / L, n and p Closing's weave draws. The envelope 4f(1 - f) is zero at the rim.
+**It keeps the track inside the scope**: the point is inside iff 2 x0 d + d^2 <= s ( L - s ); with
+|d| <= A e, e = 4 s ( L - s ) / L^2 <= 1, that holds whenever ( |x0| + A )^2 <= 1, which |x0| <=
+0.85 and A <= 0.15 give (equality, a tangent, only at Stability 0 on the band's edge). A held
+sprite does not sway (the weave is a function of distance travelled).
+
+**Path is latched per generation**, decided: "a control never teleports a sprite" applies to Path
+too, so a sprite in flight finishes on the path it started on and the next takes the new one. The
+cost: a change shows only as tracks end (25 s a crossing at the default speed), which the gate will
+read as inconclusive or dead, and a VJ may wonder (the guide's "If it looks wrong" says so). The
+alternative, re-laying every sprite on the new path at the same fraction along, is a teleport.
+
+**Grow On Approach on Transit** is the same law of range on both paths: Size x ( 1 + 3 g ( 1 - R
+) ). On Transit that grows a sprite to its closest approach (R = |x0|) and shrinks it again, and a
+track through the middle reaches 4x. Considered: normalising per track so every sprite reaches 4x
+at its closest approach (a sprite crossing near the edge would balloon there, and the size would
+stop meaning distance from the radar).
+
+**Orientation on Transit** is the bearing rule, unchanged: Face Centre's up is the bearing, Head In
+its negative (`d.upSin = faceCentre ? sin : headIn ? -sin : 0`). So on Transit a sprite turns as it
+passes the centre (through 180 degrees, quickly if it passes close; a track through the exact
+centre flips there). Head In is "top to the centre" on both paths, not "head first along the
+track" (which on Transit would be "top to the south"), as Allan specified.
+
+**Start With.** When slots are made (the first frame, or Sprite Count raised), `placeNow = clamp(
+Start With - on screen now, 0, new slots )` of them go on at once at v0.2.0's golden-ratio stagger
+(StartOf( i ) of the track); the rest are latecomers. **The window** is W = 0.85 x the shortest
+track / ( 3^Spread x ( 1 + 0.9 ( 1 - Stability ) ) ), in scope radii at Sprite Speed: the fastest
+any sprite can go is Speed x 3^Spread (the top of Spread's range) surging by (1 + a) at most
+(|w| <= 1), so a latecomer arriving at t >= 0 cannot leave before t + shortest / that, longer than
+W / Speed. The shortest track is 1 radius closing and 2 sqrt( 1 - 0.85^2 ) = 1.054 on Transit. At
+the defaults W / Speed is 11.8 s and the quickest exit 13.9 s. **Stratified**, decided: of m
+latecomers the j-th waits W ( j + u ) / m, u = PCG salt 9 of (seed, slot, generation 0): an
+irregular trickle, never a clump, with the last always in the final m-th. Plain uniform draws were
+tried first and seed 11 (the Over's only seed) put the last of nine at 58% of the window, which is
+not Steve's "the nth sprite will appear [just before the first leaves]". **A wait is a distance
+counted down at Sprite Speed** (not seconds): Speed 0 holds the latecomers back as it holds the
+rest still, and a faster Speed brings them in sooner, so the promise survives a Speed change in
+flight (not a Spread or Stability raised mid-window). The arrival is exact at any frame rate: the
+frame that runs a wait out moves the sprite only for the part of the frame after the moment it ran
+out. Respawns still drop the overshoot (v0.2.0's behaviour, which the bit-exact proof needs).
+
+**Sprite Colour.** `SpriteImage` computes, once at load from the full-size picture, the mean of the
+stored RGB weighted by the mask value (alpha, or the brightest channel): threshold-free, because
+Sprite Threshold is live and the colour is not recomputed. **Encoded values, not linear**: the
+composite writes its output with no transfer curve, so the phosphor's colours are already in those
+units. HSV saturation under 0.05 is grey (`kGreySaturation`): the panda's mean is 1.7%. On
+*Picture* with a coloured picture the composite's sprite colours become that colour scaled to the
+channel mean of the phosphor's flash and afterglow colours (`pictureTintOf`), then Hue and
+Saturation act on it as on the phosphor's (`tintOf`), so P7's two-tone becomes one colour at two
+brightnesses. The blip and grey pictures fall back to Phosphor, and with Phosphor chosen the share
+is still skipped outright at Hue 0 / Saturation 0.5. Per-texel colour in the phosphor was decided
+against (memory: another two RGBA32F buffers).
+
+**Traps hit:**
+
+- `--sprite-transit`'s per-column bound was first borrowed from `--sprite-speed` (0.25 range bins)
+  and the first run read 0.248. Re-derived: each end of a chord is placed to half a bin by sampling
+  at bin centres (the 2-tap pulse average splits that step, it does not remove it), so a chord's
+  midpoint is good to half a bin. The bound is 0.5; the worst seen is 0.25.
+- `--sprites`' orientation bound was 5 degrees ("worst seen 1.3"). A Transit Upright sprite 0.17
+  from the centre at 320x180 read 5.41: near the centre the beam's smear is a tenth of a pixel, so
+  the pixel grid's point sampling shows. Re-derived for every orientation case: the grid places
+  each edge of the lit half to half a pixel, so its centroid is good to atan( 0.5 px / offset ) and
+  0.5 px / offset: 6.3 degrees and 11% at 320x180, 3.3 degrees and 6% at 1280x720 (tighter than
+  before there).
+- The alien's light sits only 5.9% of its box above its middle (3 px at 1280x720, 1.9 at 320x180),
+  so it is Head In's second check, not its first: the top-half square is the precise one. A
+  320x180 scope has room for one isolated 32-pixel alien, so that raster requires one.
+- `--sprite-arrivals` first took 130 s on the software renderer, rendering until the first sprite
+  left (24 s of scope). It now renders until the painted count is full and finds the first exit on
+  a CPU replica of the plugin's swarm, which must agree with the plugin's to the bit at the last
+  rendered frame: 53 s.
+- A schedule check that takes each wait from the plugin's own `WaitOf()` cannot catch a wrong
+  window (the plugin and the harness move together): the window mutant survived it. Each wait is
+  now held to the harness's own statement of W (in its own share of it).
+- The browser pane hidden behind another panel never fires `requestAnimationFrame`, so the demo
+  never draws; checking it needed a scratch copy of the page with a timer in its place.
+
 ## Decisions taken without asking
 
 - **Each plugin declares only its own controls, About block last** (`HostOrder()`
@@ -421,6 +540,15 @@ a macOS runner has no accelerated GL.
 | `--sprite-repeat` | bit-exact; 1e-9 between 30 and 60 fps | the same operations in the same order; the closed-form integral | both rasterisers |
 | `--sprite-colour` | 1e-4 of the brightest channel | float `-ln( 1 - out )` near out = 0.9 is ~1e-6 relative | both |
 | `--sprite-motion`, `--sprite-utf16` | 1e-9; exact code units | double sums of frame lengths; integers | CPU (CI runs them) |
+| `--sprites` orientation (since v0.2.0) | atan( 0.5 px / offset ), 0.5 px / offset | the pixel grid places each edge of the lit half to half a pixel (replaces "5 deg, 25%: worst seen") | both rasters, both rasterisers |
+| `--sprite-transit` columns | 0.5 range bins | each chord end placed to half a bin by bin-centre sampling, so its midpoint to half a bin | raster-free (the phosphor) |
+| `--sprite-transit` fit | speed 1e-3 relative; x and the top rim 0.5 bins | a least-squares line through 50-120 columns, each good to half a bin | raster-free |
+| `--sprite-transit` weave, grow | 0.5 bins; 1.5 bins | as above; as `--sprites`' growth | both |
+| `--sprite-arrivals` count | exact, in rotations with no arrival or exit | connected blobs of one rotation's paint (decay off, the difference of two reads), sprites whose discs touch counted as one | raster-free |
+| `--sprite-arrivals` promise | painted full < first exit | the reading lags by up to two rotations (1 s); at 0.06 radii/s the law leaves 1.5 s | both rasterisers |
+| `--sprite-colour` Picture | 1e-4 in chromaticity; bit-exact fallback | as `--sprite-colour` | both |
+| `--sprite-file` colour | 1e-6 | a float of a double mean of 8-bit values | CPU decode |
+| `--sprite-path` | 1e-9; Kolmogorov-Smirnov 1% (1.63 / sqrt n) | double sums of frame lengths; the hash is uniform, KS at 1% | CPU (CI runs it) |
 
 **Resize mid-run.** The phosphor, the reflectivity, the kernel and the map are
 sized by constants, never by the host's raster, and the per-column timing is
@@ -432,7 +560,8 @@ because the day someone makes a buffer raster-sized it will catch it.
 
 `ratest --negative` sets one wrong MODEL at a time -- a test hook in the plugin,
 so the shipped shader computes the wrong thing -- and requires the check to
-fail. All 20 are detected (11 since v0.1.0, 9 for the sprites):
+fail. All 28 are detected (11 since v0.1.0, 9 for the sprites, 8 for the
+controls added since v0.2.0):
 
 | check | the wrong model |
 | --- | --- |
@@ -456,6 +585,14 @@ fail. All 20 are detected (11 since v0.1.0, 9 for the sprites):
 | `--sprite-beam` | the sprites' share never fades |
 | `--sprite-repeat` | the sprites' seed salted from the wall clock |
 | `--sprite-colour` | Hue turns the colours the other way |
+| `--sprites` | Head In drawn as Face Centre |
+| `--sprite-colour` | the picture's colour read as BGR (a DIB's order) |
+| `--sprite-path` | Transit's entry points across the whole width, not the middle 85% |
+| `--sprite-path` | the latecomers spread over one crossing at Sprite Speed, Spread and the surge ignored |
+| `--sprite-transit` | Transit's tracks run north |
+| `--sprite-transit` | Transit's sprites grow by the share of the track done, not by range |
+| `--sprite-arrivals` | the latecomers over one crossing at Sprite Speed (as above) |
+| `--sprite-arrivals` | the sprites' seed salted from the wall clock |
 
 ### The recorded mutation
 
@@ -472,15 +609,20 @@ shaders the plugin ships, not a copy of them. Since the sprites: the
 composite's mutant moved with `glowAt()` (now `* fade` -> `/ fade`, still
 `--persist`), and two more are caught: every sprite drawn twice its size
 (`2.0 * box.zw` -> `4.0`, `--sprites`) and sprites starting half a radius out
-(`1.0 - s.travelled` -> `1.5`, `--sprite-motion`). Six of six.
+(`1.0 - s.travelled` -> `1.5`, `--sprite-motion`). Since v0.2.0, four more, all C++:
+Transit running north (`half - along` -> `half + along`, `--sprite-path`), the
+latecomers' window over a crossing (`kArrivalShare = 0.85` -> `1.85`,
+`--sprite-arrivals`), Head In mirrored (`-std::sin` -> `+std::sin`, `--sprites`)
+and the picture's colour all blue channel (`p[ c ]` -> `p[ 2 ]`, `--sprite-file`).
+Ten of ten.
 
 ## Shape of the code
 
     source/Controls.*      the ParamIds, HostOrder(), groups, every 0..1 -> units mapping
     source/Sweep.h         the crossing rule: Crossed(), and LineAt() (the negative control)
     source/World.*         the source's contacts (scope units) and rain drift, PCG
-    source/Swarm.*         the sprites' motion: in from the rim, closed-form wobble, PCG (radar#5)
-    source/SpriteImage.*   a file -> the sprite's mask (stb_image, _wfopen on Windows), the built-in blip
+    source/Swarm.*         the sprites' motion: Closing or Transit, latecomers, closed-form wobble, PCG (radar#5)
+    source/SpriteImage.*   a file -> the sprite's mask and mean colour (stb_image, _wfopen on Windows), the built-in blip
     source/Shaders.*       kCommon (sine, cosine, bearingOf, beam, PCG) + kernel, map, reflect, paint, composite
     source/Radar.*         the plugin: parameters, clock, audio, per-column timing, passes
     source/SourcePlugin.cpp, EffectPlugin.cpp   the two registrations
@@ -498,7 +640,8 @@ the numbers: every check above on the GPU at two rasters and on the software
 renderer at 320x180; both bundles universal; oxbow probe reads `SW Radar` /
 `RA01` / source and `SW Radar Over` / `RA02` / effect; oxbow selftest renders
 120 frames through each; 43 parameters over both plugins all move the
-picture (65 since the sprites, all of them live).
+picture (65 since the sprites, 71 since Path, Start With and Sprite Colour,
+all of them live).
 
 Assumed, or not done:
 

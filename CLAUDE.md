@@ -20,7 +20,10 @@ Read `AGENTS.md` before touching the sweep (`Sweep.h`), the per-column timing in
 - List parameters: `./build/ratest --list` (`--over` for the effect's)
 - Set anything by name: `./build/ratest --set "Phosphor=1" --set "Range=0.8"`
 - Sprites (radar#5): `./build/ratest --set "Sprite Count=10" --set "Sprite File=$PWD/tools/fixtures/alien.png"`
-  (a file parameter takes its path as text; empty is the built-in blip)
+  (a file parameter takes its path as text; empty is the built-in blip). Since v0.2.0:
+  `--set "Path=1"` (Transit), `--set "Start With=3"`, `--set "Orientation=2"` (Head In),
+  `--set "Sprite Colour=1"` (Picture). `docs/transit.png` is the first with Path 1, Sprite Size
+  0.6045 (0.14 radii) and `--frames 940`.
 - The source as video: `./build/ratest --pipe --frames 1800 --size 1280x720 --script cues.txt | ffmpeg -f rawvideo -pix_fmt rgba -s 1280x720 -r 60 -i - out.mp4`
 - A clip through the effect: `ffmpeg -i in.mov -f rawvideo -pix_fmt rgba -s WxH - | ./build/ratest --over --pipe --size WxH | ffmpeg …`
   A cue line is `frame  Parameter Name  value` (`#` starts a comment), in the same
@@ -54,16 +57,20 @@ Read `AGENTS.md` before touching the sweep (`Sweep.h`), the per-column timing in
   `--sprites` (count, size, orientation, growth off the painted picture),
   `--sprite-speed` (off the phosphor at 60 and 24 fps), `--sprite-beam` (dark until
   the sweep, then the phosphor's decay), `--sprite-repeat` (same frame twice),
-  `--sprite-colour`; no GL: `--sprite-utf16` (the Windows path), `--sprite-motion`.
+  `--sprite-colour` (and Picture's); no GL: `--sprite-utf16` (the Windows path), `--sprite-motion`.
+  Since v0.2.0: `--sprite-transit` (Transit's track read off the phosphor column by column, the
+  weave, Grow on Transit), `--sprite-arrivals` (Start With: the painted count rotation by
+  rotation against the schedule, all in before the first leaves, the same twice); no GL:
+  `--sprite-path` (Transit's law, the entry distribution, the weave, the latecomers' law).
   Fixtures in `tools/fixtures/` (`make_fixtures.py` draws them).
 - One raster only: add `--size WxH`. The software renderer:
   `RATEST_RENDERER=software ./build/ratest --arc --size 320x180`.
-- **The checks can fail**: `--negative` (20 wrong models), `tools/mutate.sh`
-  (one character of GLSL and of Sweep.h).
+- **The checks can fail**: `--negative` (28 wrong models), `tools/mutate.sh`
+  (one character of GLSL, of Sweep.h, Swarm, Radar.cpp and SpriteImage: 10 mutants).
 - What CI runs: `--offline` and `tools/glslc.sh`.
-- No dead controls: `python3 tools/sweep.py` (65 parameters over both plugins; the
-  sprite controls are swept with ten sprites on, Orientation and Sprite File with
-  `tools/fixtures/alien.png`).
+- No dead controls: `python3 tools/sweep.py` (71 parameters over both plugins; the
+  sprite controls are swept with ten sprites on, Orientation, Sprite File and Sprite Colour
+  with `tools/fixtures/alien.png`; Path and Start With from the first frame).
 - Cost: `--bench` (720p/1080p/4K, both plugins).
 
 ## Notes
@@ -81,6 +88,11 @@ Read `AGENTS.md` before touching the sweep (`Sweep.h`), the per-column timing in
   Their motion is `Swarm.cpp` (closed-form in host time); the file is
   `SpriteImage.cpp` (stb_image, `_wfopen_s` + `Utf8ToUtf16` on Windows), loaded
   lazily on the render thread. Sprite Count defaults to 0: off.
+- **Since v0.2.0 (unreleased): Path, Start With, Sprite Colour** appended after Grow On
+  Approach (only the About buttons moved), and Head In appended to Orientation. Every default
+  is v0.2.0's picture bit for bit (AGENTS.md says how that was shown). Path is latched per
+  generation; Start With's latecomers wait a distance counted at Sprite Speed; the picture's
+  colour is a mask-weighted mean computed at load. No shader changed.
 - **Host indices are not ParamIds.** Each plugin declares its own dense list
   (`HostOrder()`), About block LAST in both, so the "User guide" button moved no
   control (it sits second inside the About block), and neither plugin declares a
@@ -117,9 +129,18 @@ Read `AGENTS.md` before touching the sweep (`Sweep.h`), the per-column timing in
 ## Not done yet
 - Never loaded into Resolume on macOS (oxbow selftest only). On Windows: the fleet's
   Arena gate (see AGENTS.md), at v0.2.0, sprites included. No OpenFX port.
-- Sprites: one picture for all of them, from all bearings, vanishing at the centre; the
-  questions put to Steve on radar#5 (head-first, a flash or pass-through at the centre,
-  several files, a sector, the picture's own colours, more than 32) are open.
+- **Path, Start With, Head In and Sprite Colour (on `claude/transit`, not merged, not
+  released) have never been in Resolume**, on either platform: harness and browser demo only.
+  They need the version bump and release when Allan wants them, and the README's and guide's
+  "not released yet" lines need changing then.
+- **plugin-bench's `arena/expect/radar.json` needs the three new rows** (Path, Start With,
+  Sprite Colour) and Orientation's third element, and `docs/arena-expect.json` (its copy) with
+  it; `ratest --expect` drafts them with notes. The gate can't see Path or Start With change on a
+  running layer (both act only on sprites that start): expect inconclusive or a note-driven
+  sequence, not "live".
+- Sprites: one picture for all of them; two paths (no sector, no other heading); Picture colour is
+  one mean colour, not per-pixel. Still open from radar#5: several files (Steve: no), a flash or
+  pass-through at the centre (Transit is his pass-through), more than 32.
 - `StoatworksAbout.h`, `ATTRIBUTIONS.md`, `.github/FUNDING.yml` and `.github/ISSUE_TEMPLATE/`
   are GENERATED by the backend's sync scripts; the user guide is `docs/USER-GUIDE.md` (PDF
   generated).
