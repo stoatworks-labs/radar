@@ -24,6 +24,10 @@ MUTANTS=(
 	"source/Sweep.h|first = floorToInt( b0 ) + 1;|first = floorToInt( b0 ) + 2;|--sweep|C++: the wedge starts a bin late, 1 -> 2"
 	"source/Shaders.cpp|/ ( 2.0 * box.zw ) + 0.5|/ ( 4.0 * box.zw ) + 0.5|--sprites|GLSL: every sprite drawn twice its size, 2.0 -> 4.0"
 	"source/Swarm.cpp|p.range      = std::max( 0.0, 1.0 - s.travelled );|p.range      = std::max( 0.0, 1.5 - s.travelled );|--sprite-motion|C++: sprites start half a radius out, 1.0 -> 1.5"
+	"source/Swarm.cpp|: half - along;|: half + along;|--sprite-path|C++: Transit runs north from the top rim, - -> +"
+	"source/Swarm.h|constexpr double kArrivalShare = 0.85;|constexpr double kArrivalShare = 1.85;|--sprite-arrivals|C++: the latecomers' window more than a crossing, 0.85 -> 1.85"
+	"source/Radar.cpp|headIn ? -std::sin( placed.bearing )|headIn ? +std::sin( placed.bearing )|--sprites|C++: Head In mirrored east for west, - -> +"
+	"source/SpriteImage.cpp|sum[ c ] += m * ( p[ c ] / 255.0 );|sum[ c ] += m * ( p[ 2 ] / 255.0 );|--sprite-file|C++: the picture's colour all blue channel, c -> 2"
 )
 
 caught=0

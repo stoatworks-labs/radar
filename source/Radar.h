@@ -46,7 +46,10 @@ public:
 		double hx = 0.0, hy = 0.0;  ///< half its width and height
 		double upSin = 0.0, upCos = 1.0;///< its up, ( sin psi, cos psi )
 		double range = 0.0, bearing = 0.0;
+		double progress = 0.0;      ///< the share of its track behind it
+		uint32_t slot = 0;          ///< its slot: a latecomer still waiting is not drawn, so this is not always the index
 		uint32_t generation = 0;    ///< how many times this slot has started again at the rim
+		bool transit = false;       ///< on the Transit path (else Closing)
 	};
 
 	explicit RadarPlugin( bool isEffect );
@@ -198,6 +201,33 @@ public:
 	{
 		spriteHueBackwardsForTest = on;
 	}
+	/// --sprites' second negative control: Head In drawn as Face Centre.
+	void SetSpriteHeadInAsFaceForTest( bool on )
+	{
+		spriteHeadInAsFaceForTest = on;
+	}
+	/// --sprite-transit's negative controls: the tracks run north; and
+	/// Transit's growth by the share of the track done, not by range.
+	void SetSpriteTransitNorthForTest( bool on )
+	{
+		swarm.SetTransitNorthForTest( on );
+	}
+	void SetSpriteTransitGrowByTravelForTest( bool on )
+	{
+		spriteGrowByTravelForTest = on;
+	}
+	/// --sprite-arrivals' negative control: the latecomers over one whole
+	/// crossing at Sprite Speed, Spread and the surge ignored.
+	void SetSpriteArrivalNaiveForTest( bool on )
+	{
+		swarm.SetArrivalNaiveForTest( on );
+	}
+	/// --sprite-colour's second negative control: the picture's colour read
+	/// as BGR, the way a DIB hands its channels over.
+	void SetSpriteColourSwappedForTest( bool on )
+	{
+		spriteColourSwappedForTest = on;
+	}
 
 	/// The composite draws the harness a window onto the polar grid instead
 	/// of the scope: output pixel ( x, y ) is texel ( x, y ) + origin, faded
@@ -268,6 +298,25 @@ public:
 	{
 		return spritesInBand;
 	}
+	/// Latecomers not yet on the scope (Start With below Sprite Count).
+	int SpritesWaitingForTest() const
+	{
+		return swarm.Waiting();
+	}
+	/// The sprites' colours as the last composite was handed them: (flash,
+	/// afterglow), and whether the share was recoloured at all.
+	const float* SpriteFlashColourForTest() const
+	{
+		return spriteFlashColour;
+	}
+	const float* SpriteAfterColourForTest() const
+	{
+		return spriteAfterColour;
+	}
+	bool SpriteTintForTest() const
+	{
+		return spriteTint;
+	}
 
 private:
 	void UpdateClock();
@@ -337,6 +386,8 @@ private:
 	swarm::Swarm swarm;
 	std::vector< SpriteDraw > spriteDraws;
 	int spritesInBand = 0;
+	float spriteFlashColour[ 3 ] = {}, spriteAfterColour[ 3 ] = {};
+	bool spriteTint = false;
 
 	audio::Analyser analyser;
 	bool unprimed       = false;
@@ -363,6 +414,9 @@ private:
 	bool spriteNoFadeForTest             = false;
 	bool spriteWallSeedForTest           = false;
 	bool spriteHueBackwardsForTest       = false;
+	bool spriteHeadInAsFaceForTest       = false;
+	bool spriteGrowByTravelForTest       = false;
+	bool spriteColourSwappedForTest      = false;
 };
 
 } // namespace radar

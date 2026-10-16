@@ -56,7 +56,9 @@ constexpr double kSpriteGrowth = 3.0;
 
 const char* const kDirectionNames[]   = { "Clockwise", "Anticlockwise" };
 const char* const kPhosphorNames[]    = { "P7", "P19", "Green" };
-const char* const kOrientationNames[] = { "Upright", "Face Centre" };
+const char* const kOrientationNames[] = { "Upright", "Face Centre", "Head In" };
+const char* const kPathNames[]        = { "Closing", "Transit" };
+const char* const kSpriteColourNames[] = { "Phosphor", "Picture" };
 
 /// The y where sinc^4( y ) = 1/2: sinc( y ) = 2^-1/4. Newton, once.
 double sincHalfPower()
@@ -113,6 +115,9 @@ const char* nameOf( unsigned int id )
 	case PT_SPRITE_HUE: return "Hue";
 	case PT_SPRITE_SATURATION: return "Saturation";
 	case PT_SPRITE_GROW: return "Grow On Approach";
+	case PT_SPRITE_PATH: return "Path";
+	case PT_SPRITE_START: return "Start With";
+	case PT_SPRITE_COLOUR: return "Sprite Colour";
 	default: return "?";
 	}
 }
@@ -163,6 +168,18 @@ void tintOf( const float in[ 3 ], double hueTurns, double saturation, float out[
 		const double turned = v[ i ] * c + cross[ i ] * s + mean * ( 1.0 - c );
 		out[ i ]            = static_cast< float >( std::max( 0.0, mean + ( turned - mean ) * 2.0 * saturation ) );
 	}
+}
+
+/// Sprite Colour's Picture: the picture's colour at the phosphor colour's
+/// brightness, the mean of the three channels (the quantity tintOf keeps). So
+/// a green picture's sprites flash and glow green, as bright as the phosphor's
+/// would, and Hue and Saturation then turn and scale that green.
+void pictureTintOf( const float phosphor[ 3 ], const float picture[ 3 ], float out[ 3 ] )
+{
+	const double want = ( static_cast< double >( phosphor[ 0 ] ) + phosphor[ 1 ] + phosphor[ 2 ] ) / 3.0;
+	const double have = ( static_cast< double >( picture[ 0 ] ) + picture[ 1 ] + picture[ 2 ] ) / 3.0;
+	for( int i = 0; i < 3; ++i )
+		out[ i ] = static_cast< float >( have > 0.0 ? picture[ i ] * want / have : 0.0 );
 }
 } // namespace
 
@@ -225,6 +242,11 @@ RadarPlugin::RadarPlugin( bool effect ) :
 	params[ PT_SPRITE_HUE ]        = 0.0f;
 	params[ PT_SPRITE_SATURATION ] = 0.5f;
 	params[ PT_SPRITE_GROW ]       = 0.0f;
+	//Since v0.2.0, each at the value that does what v0.2.0 did: Closing, all
+	//of them on at once, the phosphor's colours.
+	params[ PT_SPRITE_PATH ]       = static_cast< float >( SpritePath::Closing );
+	params[ PT_SPRITE_START ]      = static_cast< float >( kMaxSprites );
+	params[ PT_SPRITE_COLOUR ]     = static_cast< float >( SpriteColour::Phosphor );
 
 	for( unsigned int host = 0; host < hostOrder.size(); ++host )
 	{
@@ -243,9 +265,25 @@ RadarPlugin::RadarPlugin( bool effect ) :
 				SetParamElementInfo( host, static_cast< unsigned int >( i ), kPhosphorNames[ i ], static_cast< float >( i ) );
 			break;
 		case PT_ORIENTATION:
+			//Head In is the third element, after the two v0.2.0 had, so a saved
+			//Upright or Face Centre still means what it did.
+			SetOptionParamInfo( host, name, 3, params[ id ] );
+			for( int i = 0; i < 3; ++i )
+				SetParamElementInfo( host, static_cast< unsigned int >( i ), kOrientationNames[ i ], static_cast< float >( i ) );
+			break;
+		case PT_SPRITE_PATH:
 			SetOptionParamInfo( host, name, 2, params[ id ] );
 			for( int i = 0; i < 2; ++i )
-				SetParamElementInfo( host, static_cast< unsigned int >( i ), kOrientationNames[ i ], static_cast< float >( i ) );
+				SetParamElementInfo( host, static_cast< unsigned int >( i ), kPathNames[ i ], static_cast< float >( i ) );
+			break;
+		case PT_SPRITE_COLOUR:
+			SetOptionParamInfo( host, name, 2, params[ id ] );
+			for( int i = 0; i < 2; ++i )
+				SetParamElementInfo( host, static_cast< unsigned int >( i ), kSpriteColourNames[ i ], static_cast< float >( i ) );
+			break;
+		case PT_SPRITE_START:
+			SetParamInfo( host, name, FF_TYPE_INTEGER, params[ id ] );
+			SetParamRange( host, 0.0f, static_cast< float >( kMaxSprites ) );
 			break;
 		case PT_SPRITE_FILE:
 			//SetFileParamInfo ONLY: it pushes its own entry, and a SetParamInfo
@@ -624,6 +662,11 @@ FFResult RadarPlugin::ProcessOpenGL( ProcessOpenGLStruct* pgl )
 		settings.speed     = SpriteSpeedFromParam( params[ PT_SPRITE_SPEED ] );
 		settings.spread    = SpeedSpreadFromParam( params[ PT_SPEED_SPREAD ] );
 		settings.stability = StabilityFromParam( params[ PT_STABILITY ] );
+		settings.path      = OptionIndex( params[ PT_SPRITE_PATH ], static_cast< int >( SpritePath::Count ) )
+		                             == static_cast< int >( SpritePath::Transit )
+		                         ? swarm::Path::Transit
+		                         : swarm::Path::Closing;
+		settings.startWith = SpriteStartFromParam( params[ PT_SPRITE_START ] );
 		swarm.Step( dt, settings );
 	}
 
@@ -656,27 +699,42 @@ FFResult RadarPlugin::ProcessOpenGL( ProcessOpenGLStruct* pgl )
 	{
 		const double size      = SpriteSizeFromParam( params[ PT_SPRITE_SIZE ] );
 		const double grow      = SpriteGrowFromParam( params[ PT_SPRITE_GROW ] );
-		const bool faceCentre  = !spriteOrientationIgnoredForTest
-		                        && OptionIndex( params[ PT_ORIENTATION ], static_cast< int >( Orientation::Count ) )
-		                               == static_cast< int >( Orientation::FaceCentre );
+		const int orientation  = spriteOrientationIgnoredForTest
+		                             ? static_cast< int >( Orientation::Upright )
+		                             : OptionIndex( params[ PT_ORIENTATION ], static_cast< int >( Orientation::Count ) );
+		const bool headIn      = orientation == static_cast< int >( Orientation::HeadIn ) && !spriteHeadInAsFaceForTest;
+		const bool faceCentre  = orientation == static_cast< int >( Orientation::FaceCentre )
+		                        || ( orientation == static_cast< int >( Orientation::HeadIn ) && spriteHeadInAsFaceForTest );
 		const double longer    = std::max( 1, std::max( spriteMask.width, spriteMask.height ) );
 		const double aspectX   = spriteMask.width / longer, aspectY = spriteMask.height / longer;
 		spriteDraws.clear();
 		for( const swarm::Placed& placed : swarm.Sprites() )
 		{
-			const double side = size * ( 1.0 + kSpriteGrowth * grow * ( 1.0 - std::clamp( placed.range, 0.0, 1.0 ) ) );
+			//Grow On Approach is a law of the range, on either path: Size x
+			//( 1 + 3 g ( 1 - R ) ). Closing, that grows a sprite all the way in;
+			//on Transit it grows to the track's closest approach to the centre
+			//and shrinks again on the way out.
+			const double closeness = spriteGrowByTravelForTest && placed.path == swarm::Path::Transit
+			                             ? placed.progress
+			                             : 1.0 - std::clamp( placed.range, 0.0, 1.0 );
+			const double side = size * ( 1.0 + kSpriteGrowth * grow * closeness );
 			SpriteDraw d;
 			d.x       = placed.x;
 			d.y       = placed.y;
 			d.hx      = 0.5 * side * aspectX;
 			d.hy      = 0.5 * side * aspectY;
 			//Face Centre: the sprite's up is its bearing, so its bottom faces
-			//the centre whichever way it comes in.
-			d.upSin   = faceCentre ? std::sin( placed.bearing ) : 0.0;
-			d.upCos   = faceCentre ? std::cos( placed.bearing ) : 1.0;
+			//the centre whichever way it comes in. Head In: the other way up,
+			//its top to the centre. On Transit both turn the sprite as it
+			//passes the centre, because its bearing does.
+			d.upSin   = faceCentre ? std::sin( placed.bearing ) : headIn ? -std::sin( placed.bearing ) : 0.0;
+			d.upCos   = faceCentre ? std::cos( placed.bearing ) : headIn ? -std::cos( placed.bearing ) : 1.0;
 			d.range   = placed.range;
 			d.bearing    = placed.bearing;
+			d.progress   = placed.progress;
+			d.slot       = placed.slot;
 			d.generation = placed.generation;
+			d.transit    = placed.path == swarm::Path::Transit;
 			spriteDraws.push_back( d );
 		}
 	}
@@ -973,18 +1031,38 @@ FFResult RadarPlugin::ProcessOpenGL( ProcessOpenGLStruct* pgl )
 		compositeShader.Set( "FaceColour", look.face[ 0 ], look.face[ 1 ], look.face[ 2 ] );
 		{
 			//Hue 0 (or a whole turn) and Saturation 0.5 are the phosphor's own
-			//colours, and then the composite does not touch the share at all.
+			//colours, and then the composite does not touch the share at all --
+			//on Phosphor, or on Picture when the picture has no colour to give
+			//(the blip, or a grey picture).
 			const double hue        = SpriteHueFromParam( params[ PT_SPRITE_HUE ] );
 			const double saturation = SpriteSaturationFromParam( params[ PT_SPRITE_SATURATION ] );
-			const bool tint         = ( hue > 0.0 && hue < 1.0 ) || saturation != 0.5;
+			const bool picture      = OptionIndex( params[ PT_SPRITE_COLOUR ], static_cast< int >( SpriteColour::Count ) )
+			                         == static_cast< int >( SpriteColour::Picture )
+			                     && spriteMask.coloured;
+			const bool tint         = picture || ( hue > 0.0 && hue < 1.0 ) || saturation != 0.5;
 			float flash[ 3 ] = { look.flash[ 0 ], look.flash[ 1 ], look.flash[ 2 ] };
 			float after[ 3 ] = { look.after[ 0 ], look.after[ 1 ], look.after[ 2 ] };
 			if( tint )
 			{
+				//The colour Hue and Saturation act on: the phosphor's, or the
+				//picture's at the phosphor's brightness.
+				float baseFlash[ 3 ] = { look.flash[ 0 ], look.flash[ 1 ], look.flash[ 2 ] };
+				float baseAfter[ 3 ] = { look.after[ 0 ], look.after[ 1 ], look.after[ 2 ] };
+				if( picture )
+				{
+					const float* c         = spriteMask.colour;
+					const float swapped[3] = { c[ 2 ], c[ 1 ], c[ 0 ] };
+					const float* colour    = spriteColourSwappedForTest ? swapped : c;
+					pictureTintOf( look.flash, colour, baseFlash );
+					pictureTintOf( look.after, colour, baseAfter );
+				}
 				const double turn = spriteHueBackwardsForTest ? -hue : hue;
-				tintOf( look.flash, turn, saturation, flash );
-				tintOf( look.after, turn, saturation, after );
+				tintOf( baseFlash, turn, saturation, flash );
+				tintOf( baseAfter, turn, saturation, after );
 			}
+			std::copy( flash, flash + 3, spriteFlashColour );
+			std::copy( after, after + 3, spriteAfterColour );
+			spriteTint = tint;
 			compositeShader.Set( "SpriteTint", tint ? 1 : 0 );
 			compositeShader.Set( "SpriteFlashColour", flash[ 0 ], flash[ 1 ], flash[ 2 ] );
 			compositeShader.Set( "SpriteAfterColour", after[ 0 ], after[ 1 ], after[ 2 ] );

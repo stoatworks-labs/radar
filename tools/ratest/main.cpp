@@ -804,18 +804,21 @@ int runBench()
 	};
 	const Size sizes[] = { { 1280, 720, "720p" }, { 1920, 1080, "1080p" }, { 3840, 2160, "4K" } };
 	std::printf( "\n=== bench: the defaults, after 120 frames of warm-up, each frame timed with glFinish both sides\n"
-	             "    (then with 16 sprites of tools/fixtures/alien.png, growing on approach, the sprites' own defaults otherwise)\n" );
-	for( int sprites : { 0, 16 } )
+	             "    (then with 16 sprites of tools/fixtures/alien.png, growing on approach, the sprites' own defaults otherwise,\n"
+	             "    Closing and then Transit)\n" );
+	for( int sprites : { 0, 16, -16 } )
 	for( bool effect : { false, true } )
 		for( const Size& size : sizes )
 		{
 			Rig rig( effect );
 			if( !rig.Init( size.w, size.h ) )
 				return 1;
-			if( sprites > 0 )
+			if( sprites != 0 )
 			{
-				rig.Set( PT_SPRITE_COUNT, static_cast< float >( sprites ) );
+				rig.Set( PT_SPRITE_COUNT, static_cast< float >( std::abs( sprites ) ) );
 				rig.Set( PT_SPRITE_GROW, 0.5f );
+				if( sprites < 0 )
+					rig.Set( PT_SPRITE_PATH, static_cast< float >( SpritePath::Transit ) );
 				setSpriteFile( rig, fixturePath( "alien.png" ) );
 			}
 			if( !rig.Render( 120 ) )
@@ -835,8 +838,9 @@ int runBench()
 			for( double t : times )
 				mean += t / kTimed;
 			std::sort( times.begin(), times.end() );
-			std::printf( "  %-14s %-11s %-6s median %5.2f ms/frame, mean %5.2f, worst %5.2f  (median %4.1f%% of a 60 fps frame)\n",
-			             effect ? "SW Radar Over" : "SW Radar", sprites > 0 ? "16 sprites" : "", size.name, times[ kTimed / 2 ], mean, times.back(),
+			std::printf( "  %-14s %-19s %-6s median %5.2f ms/frame, mean %5.2f, worst %5.2f  (median %4.1f%% of a 60 fps frame)\n",
+			             effect ? "SW Radar Over" : "SW Radar", sprites > 0 ? "16 sprites Closing" : sprites < 0 ? "16 sprites Transit" : "",
+			             size.name, times[ kTimed / 2 ], mean, times.back(),
 			             100.0 * times[ kTimed / 2 ] / ( 1000.0 / 60.0 ) );
 		}
 	return 0;
@@ -873,6 +877,13 @@ struct Perturb
 	bool spriteNoFade             = false;///< --sprite-beam: the sprites' share never fades
 	bool spriteWallSeed           = false;///< --sprite-repeat: the seed salted from the wall clock
 	bool spriteHueBackwards       = false;///< --sprite-colour: Hue turns the colours the other way
+	// Since v0.2.0: Path, Start With, Head In, Sprite Colour.
+	bool transitNorth        = false;///< --sprite-transit: Transit's tracks run north
+	bool transitGrowByTravel = false;///< --sprite-transit: Transit grows by the share of its track done, not by range
+	bool transitEntryWide    = false;///< --sprite-path: Transit's entry points across the whole width
+	bool arrivalNaive        = false;///< --sprite-path, --sprite-arrivals: latecomers over one crossing at Sprite Speed
+	bool headInAsFace        = false;///< --sprites: Head In drawn as Face Centre
+	bool colourSwapped       = false;///< --sprite-colour: the picture's colour read as BGR
 };
 
 using CheckFn = int ( * )( const Perturb& );
@@ -2621,6 +2632,58 @@ int runSpriteFile( const Perturb& perturb )
 	       "a copy of alien.png in a folder and under a name with accents, a check mark, katakana and an emoji: the same mask "
 	       "(UTF-8 straight through on macOS; Windows widens it, --sprite-utf16)" );
 
+	//The picture's colour (Sprite Colour's Picture, since v0.2.0): the mean of
+	//its RGB, each pixel weighted by its mask value. A picture whose answer is
+	//known to the bit: a red block (opaque), a blue-ish block (alpha 128), and
+	//the rest transparent WHITE, so a mean that let transparent pixels in, or
+	//weighted them wrong, would show.
+	{
+		const std::string blocks = dir + "/blocks.png";
+		const int bw = 40, bh = 24;
+		Floats rgba( static_cast< size_t >( bw ) * bh * 4 );
+		double sum[ 3 ] = { 0.0, 0.0, 0.0 }, weight = 0.0;
+		for( int y = 0; y < bh; ++y )
+			for( int x = 0; x < bw; ++x )
+			{
+				const int px[ 4 ] = { x < 16 ? 255 : x < 28 ? 0 : 255, x < 16 ? 0 : x < 28 ? 64 : 255, x < 16 ? 0 : 255,
+					                  x < 16 ? 255 : x < 28 ? 128 : 0 };
+				for( int c = 0; c < 4; ++c )
+					rgba[ ( static_cast< size_t >( y ) * bw + x ) * 4 + c ] = static_cast< float >( px[ c ] / 255.0 );
+				const double w = px[ 3 ] / 255.0;
+				for( int c = 0; c < 3; ++c )
+					sum[ c ] += w * px[ c ] / 255.0;
+				weight += w;
+			}
+		writePng( blocks, bw, bh, rgba );
+		m          = load( blocks );
+		double off = 0.0;
+		for( int c = 0; c < 3; ++c )
+			off = std::max( off, std::fabs( m.colour[ c ] - sum[ c ] / weight ) );
+		Check( m.coloured && off < 1e-6,
+		       fmt( "a red block, a half-transparent blue one and transparent white: its colour is the alpha-weighted mean (%.5f, %.5f, "
+		            "%.5f), to %.1e",
+		            sum[ 0 ] / weight, sum[ 1 ] / weight, sum[ 2 ] / weight, off ) );
+	}
+	{
+		//make_fixtures.py paints every pixel of the alien (0.45, 0.95, 0.35),
+		//edges included (it stores straight colour): (115, 242, 89) in 8 bits.
+		const double want[ 3 ] = { 115.0 / 255.0, 242.0 / 255.0, 89.0 / 255.0 };
+		m                      = load( alienPng );
+		double off             = 0.0;
+		for( int c = 0; c < 3; ++c )
+			off = std::max( off, std::fabs( m.colour[ c ] - want[ c ] ) );
+		const bool alienColour = m.coloured && off < 1e-6;
+		m                      = load( alienJpg );
+		const bool jpgGreen    = m.coloured && m.colour[ 1 ] > m.colour[ 0 ] && m.colour[ 1 ] > m.colour[ 2 ];
+		m                      = load( fixturePath( "panda.png" ) );
+		const bool pandaGrey   = !m.coloured;
+		m                      = load( "" );
+		Check( alienColour && jpgGreen && pandaGrey && !m.coloured,
+		       fmt( "alien.png's colour is (115, 242, 89) / 255 to %.1e; alien.jpg's (by its brightest channel) is green too; the "
+		            "black-and-white panda is grey and the blip has none, so neither tints anything",
+		            off ) );
+	}
+
 	//The picture: a bad file draws exactly what no file does; a good one not.
 	for( const Raster& raster : kRasters )
 	{
@@ -2735,6 +2798,122 @@ int runSpriteThreshold( const Perturb& perturb )
 //===========================================================================
 // --sprites: how many, how big, which way up, and growing -- from the picture.
 //===========================================================================
+const char* orientationName( Orientation o )
+{
+	return o == Orientation::FaceCentre ? "Face Centre" : o == Orientation::HeadIn ? "Head In" : "Upright";
+}
+const char* orientationWay( Orientation o )
+{
+	return o == Orientation::FaceCentre ? "outward" : o == Orientation::HeadIn ? "inward" : "screen up";
+}
+
+/// The light of each isolated sprite on the screen, against where its
+/// orientation says its light should sit: `shift` of its size along its up
+/// from its middle (a quarter for the top-half square).
+struct OrientationReading
+{
+	int measured = 0, offNorth = 0;
+	std::vector< double > angles, ratios;
+	double worstAngle = 0.0, worstLength = 0.0;
+	int wrong( double degrees, double share ) const
+	{
+		int bad = 0;
+		for( size_t i = 0; i < angles.size(); ++i )
+			bad += angles[ i ] > degrees || std::fabs( ratios[ i ] - 1.0 ) > share;
+		return bad;
+	}
+};
+
+OrientationReading readOrientation( Rig& rig, double size, Orientation orientation, double shift )
+{
+	OrientationReading o;
+	const Floats out = rig.Output();
+	const double cx = rig.plugin.ScopeCentreX(), cy = rig.plugin.ScopeCentreY(), R = rig.plugin.ScopeRadius();
+	const auto sprites = rig.plugin.SpritesForTest();
+	double face        = 1e30;
+	for( int y = 0; y < rig.height; ++y )
+		for( int x = 0; x < rig.width; ++x )
+			if( std::hypot( x + 0.5 - cx, y + 0.5 - cy ) < R - 2.0 )
+				face = std::min( face, pixelLuminance( out, rig.width, x, y ) );
+	for( size_t i = 0; i < sprites.size(); ++i )
+	{
+		const auto& s = sprites[ i ];
+		if( !isolated( sprites, i ) )
+			continue;
+		const double px = cx + s.x * R, py = cy + s.y * R, reach = 0.75 * size * R;
+		double sum = 0.0, mx = 0.0, my = 0.0;
+		for( int y = static_cast< int >( py - reach ) - 1; y <= static_cast< int >( py + reach ) + 1; ++y )
+			for( int x = static_cast< int >( px - reach ) - 1; x <= static_cast< int >( px + reach ) + 1; ++x )
+			{
+				if( x < 0 || y < 0 || x >= rig.width || y >= rig.height )
+					continue;
+				const double qx = x + 0.5, qy = y + 0.5;
+				if( std::hypot( qx - px, qy - py ) > reach )
+					continue;
+				//Each pixel belongs to the nearest sprite.
+				bool mine = true;
+				for( size_t j = 0; j < sprites.size(); ++j )
+					mine = mine && ( j == i || std::hypot( qx - ( cx + sprites[ j ].x * R ), qy - ( cy + sprites[ j ].y * R ) )
+					                               >= std::hypot( qx - px, qy - py ) );
+				if( !mine )
+					continue;
+				const double l = pixelLuminance( out, rig.width, x, y ) - face;
+				sum += l;
+				mx += l * ( qx - px );
+				my += l * ( qy - py );
+			}
+		if( sum <= 0.0 )
+			continue;
+		++o.measured;
+		mx /= sum;
+		my /= sum;
+		const double turn = orientation == Orientation::FaceCentre ? 1.0 : orientation == Orientation::HeadIn ? -1.0 : 0.0;
+		const double ex   = turn != 0.0 ? turn * std::sin( s.bearing ) : 0.0;
+		const double ey   = turn != 0.0 ? turn * std::cos( s.bearing ) : 1.0;
+		const double length = std::hypot( mx, my );
+		const double angle  = std::acos( std::clamp( ( mx * ex + my * ey ) / std::max( length, 1e-12 ), -1.0, 1.0 ) ) * 180.0 / kPi;
+		const double ratio  = length / ( shift * size * R );
+		o.angles.push_back( angle );
+		o.ratios.push_back( ratio );
+		o.worstAngle  = std::max( o.worstAngle, angle );
+		o.worstLength = std::max( o.worstLength, std::fabs( ratio - 1.0 ) );
+		const double fromNorth = std::fabs( std::remainder( s.bearing, 2.0 * kPi ) ) * 180.0 / kPi;
+		o.offNorth += fromNorth > 30.0;
+	}
+	return o;
+}
+
+/// Where a mask's silhouette (bilinear, over `threshold`) has its centroid,
+/// along its up, as a share of its box's longer side: the harness's own
+/// reading of the picture the plugin loaded.
+double silhouetteOffset( const sprite::Mask& m, double threshold )
+{
+	auto texel = [ & ]( int i, int j ) {
+		i = std::clamp( i, 0, m.width - 1 );
+		j = std::clamp( j, 0, m.height - 1 );
+		return static_cast< double >( m.value[ static_cast< size_t >( j ) * m.width + i ] );
+	};
+	const int n = 512;
+	double sum = 0.0, moment = 0.0;
+	for( int b = 0; b < n; ++b )
+		for( int a = 0; a < n; ++a )
+		{
+			const double s = ( a + 0.5 ) / n, tt = ( b + 0.5 ) / n;
+			const double x = s * m.width - 0.5, y = tt * m.height - 0.5;
+			const int x0 = static_cast< int >( std::floor( x ) ), y0 = static_cast< int >( std::floor( y ) );
+			const double fx = x - x0, fy = y - y0;
+			const double v = ( texel( x0, y0 ) * ( 1 - fx ) + texel( x0 + 1, y0 ) * fx ) * ( 1 - fy )
+			                 + ( texel( x0, y0 + 1 ) * ( 1 - fx ) + texel( x0 + 1, y0 + 1 ) * fx ) * fy;
+			if( v > threshold )
+			{
+				sum += 1.0;
+				moment += tt - 0.5;
+			}
+		}
+	const double longer = std::max( m.width, m.height );
+	return sum > 0.0 ? moment / sum * m.height / longer : 0.0;
+}
+
 int runSprites( const Perturb& perturb )
 {
 	std::printf( "\n=== sprites: Sprite Count blobs on the phosphor and the screen; Size across them; their top where Orientation "
@@ -2823,8 +3002,48 @@ int runSprites( const Perturb& perturb )
 			            size * kRanges, measured, what.c_str() ) );
 		}
 
-		//3. Orientation: the top-half sprite's light sits above its centre.
-		for( Orientation orientation : { Orientation::Upright, Orientation::FaceCentre } )
+		//3. Orientation: the top-half sprite's light sits above its centre, on
+		//either path. Upright: screen up. Face Centre: outward. Head In: inward.
+		for( SpritePath path : { SpritePath::Closing, SpritePath::Transit } )
+			for( Orientation orientation : { Orientation::Upright, Orientation::FaceCentre, Orientation::HeadIn } )
+			{
+				Rig rig;
+				if( !rig.Init( raster.w, raster.h ) )
+					return 1;
+				spriteScene( rig );
+				rig.plugin.SetDecayForTest( false );
+				rig.plugin.SetSpriteOrientationIgnoredForTest( perturb.spriteOrientationIgnored );
+				rig.plugin.SetSpriteHeadInAsFaceForTest( perturb.headInAsFace );
+				rig.Set( PT_RPM, ParamFromRpm( 120.0 ) );
+				rig.Set( PT_SPRITE_COUNT, 5.0f );
+				rig.Set( PT_SPRITE_PATH, static_cast< float >( path ) );
+				const double R    = 0.95 * 0.5 * std::min( raster.w, raster.h );
+				const double want = std::max( 0.1, 18.0 / R );//at least 18 px across
+				rig.Set( PT_SPRITE_SIZE, ParamFromSpriteSize( want ) );
+				rig.Set( PT_ORIENTATION, static_cast< float >( orientation ) );
+				setSpriteFile( rig, top );
+				if( !rig.Render( 31 ) )
+					return 1;
+				const double size = SpriteSizeFromParam( ParamFromSpriteSize( want ) );
+				const OrientationReading o = readOrientation( rig, size, orientation, 0.25 );
+				//The pixel grid places each edge of the lit half to half a pixel,
+				//so its centroid is good to half a pixel across and along the
+				//offset: atan( 0.5 / offset ) and 0.5 / offset (offset in pixels).
+				const double offset = 0.25 * size * R, angleBound = std::atan( 0.5 / offset ) * 180.0 / kPi;
+				//Face Centre and Head In are only told from Upright by sprites away
+				//from north (Head In from Face Centre by any).
+				Check( o.measured >= 2 && o.offNorth >= 2 && o.wrong( angleBound, 0.5 / offset ) == 0,
+				       fmt( "%dx%d  %s, %s: %d sprites, the light's centroid within %.2f deg of %s, at %.0f%%-%.0f%% of a quarter size (%.1f "
+				            "px) from the centre (bounds %.1f deg, %.0f%%: half a pixel); %d of them more than 30 deg from north",
+				            raster.w, raster.h, path == SpritePath::Transit ? "Transit" : "Closing", orientationName( orientation ),
+				            o.measured, o.worstAngle, orientationWay( orientation ), 100.0 * ( 1.0 - o.worstLength ),
+				            100.0 * ( 1.0 + o.worstLength ), offset, angleBound, 100.0 * 0.5 / offset, o.offNorth ) );
+			}
+
+		//3b. Head In with the asymmetric alien (tools/fixtures/alien.png): its
+		//light sits above its middle by the centroid of its silhouette (the
+		//head is wide at the top), and Head In turns that towards the centre.
+		for( Orientation orientation : { Orientation::FaceCentre, Orientation::HeadIn } )
 		{
 			Rig rig;
 			if( !rig.Init( raster.w, raster.h ) )
@@ -2832,76 +3051,28 @@ int runSprites( const Perturb& perturb )
 			spriteScene( rig );
 			rig.plugin.SetDecayForTest( false );
 			rig.plugin.SetSpriteOrientationIgnoredForTest( perturb.spriteOrientationIgnored );
+			rig.plugin.SetSpriteHeadInAsFaceForTest( perturb.headInAsFace );
 			rig.Set( PT_RPM, ParamFromRpm( 120.0 ) );
 			rig.Set( PT_SPRITE_COUNT, 5.0f );
 			const double R    = 0.95 * 0.5 * std::min( raster.w, raster.h );
-			const double want = std::max( 0.1, 18.0 / R );//at least 18 px across
+			const double want = std::max( 0.15, 32.0 / R );//at least 32 px across
 			rig.Set( PT_SPRITE_SIZE, ParamFromSpriteSize( want ) );
 			rig.Set( PT_ORIENTATION, static_cast< float >( orientation ) );
-			setSpriteFile( rig, top );
+			setSpriteFile( rig, fixturePath( "alien.png" ) );
 			if( !rig.Render( 31 ) )
 				return 1;
-			const double size = SpriteSizeFromParam( ParamFromSpriteSize( want ) );
-			const Floats out  = rig.Output();
-			const double cx = rig.plugin.ScopeCentreX(), cy = rig.plugin.ScopeCentreY();
-			const auto sprites = rig.plugin.SpritesForTest();
-			double face        = 1e30;
-			for( int y = 0; y < rig.height; ++y )
-				for( int x = 0; x < rig.width; ++x )
-					if( std::hypot( x + 0.5 - cx, y + 0.5 - cy ) < R - 2.0 )
-						face = std::min( face, pixelLuminance( out, rig.width, x, y ) );
-			int measured = 0, wrong = 0, offNorth = 0;
-			double worstAngle = 0.0, worstLength = 0.0;
-			for( size_t i = 0; i < sprites.size(); ++i )
-			{
-				const auto& s = sprites[ i ];
-				if( !isolated( sprites, i ) )
-					continue;
-				const double px = cx + s.x * R, py = cy + s.y * R, reach = 0.75 * size * R;
-				double sum = 0.0, mx = 0.0, my = 0.0;
-				for( int y = static_cast< int >( py - reach ) - 1; y <= static_cast< int >( py + reach ) + 1; ++y )
-					for( int x = static_cast< int >( px - reach ) - 1; x <= static_cast< int >( px + reach ) + 1; ++x )
-					{
-						if( x < 0 || y < 0 || x >= rig.width || y >= rig.height )
-							continue;
-						const double qx = x + 0.5, qy = y + 0.5;
-						if( std::hypot( qx - px, qy - py ) > reach )
-							continue;
-						//Each pixel belongs to the nearest sprite.
-						bool mine = true;
-						for( size_t j = 0; j < sprites.size(); ++j )
-							mine = mine && ( j == i || std::hypot( qx - ( cx + sprites[ j ].x * R ), qy - ( cy + sprites[ j ].y * R ) )
-							                               >= std::hypot( qx - px, qy - py ) );
-						if( !mine )
-							continue;
-						const double l = pixelLuminance( out, rig.width, x, y ) - face;
-						sum += l;
-						mx += l * ( qx - px );
-						my += l * ( qy - py );
-					}
-				if( sum <= 0.0 )
-					continue;
-				++measured;
-				mx /= sum;
-				my /= sum;
-				const double ex = orientation == Orientation::FaceCentre ? std::sin( s.bearing ) : 0.0;
-				const double ey = orientation == Orientation::FaceCentre ? std::cos( s.bearing ) : 1.0;
-				const double length = std::hypot( mx, my );
-				const double angle  = std::acos( std::clamp( ( mx * ex + my * ey ) / std::max( length, 1e-12 ), -1.0, 1.0 ) ) * 180.0 / kPi;
-				const double ratio  = length / ( 0.25 * size * R );
-				worstAngle          = std::max( worstAngle, angle );
-				worstLength         = std::max( worstLength, std::fabs( ratio - 1.0 ) );
-				wrong += angle > 5.0 || std::fabs( ratio - 1.0 ) > 0.25;
-				const double fromNorth = std::fabs( std::remainder( s.bearing, 2.0 * kPi ) ) * 180.0 / kPi;
-				offNorth += fromNorth > 30.0;
-			}
-			//Face Centre is only told from Upright by sprites away from north.
-			Check( measured >= 2 && offNorth >= 2 && wrong == 0,
-			       fmt( "%dx%d  %s: %d sprites, the light's centroid within %.2f deg of %s, at %.0f%%-%.0f%% of a quarter size from "
-			            "the centre (bounds 5 deg, 25%%); %d of them more than 30 deg from north",
-			            raster.w, raster.h, orientation == Orientation::FaceCentre ? "Face Centre" : "Upright", measured, worstAngle,
-			            orientation == Orientation::FaceCentre ? "outward" : "screen up", 100.0 * ( 1.0 - worstLength ),
-			            100.0 * ( 1.0 + worstLength ), offNorth ) );
+			const double size  = SpriteSizeFromParam( ParamFromSpriteSize( want ) );
+			const double shift = silhouetteOffset( rig.plugin.SpriteMaskForTest(), 0.5 );
+			const OrientationReading o = readOrientation( rig, size, orientation, shift );
+			//The same half pixel, on an offset of only 6% of the sprite. A 320x180
+			//scope has room for one isolated 32-pixel alien (the top-half square
+			//above is the check that needs two).
+			const double offset = shift * size * R, angleBound = std::atan( 0.5 / offset ) * 180.0 / kPi;
+			Check( o.measured >= 1 && o.offNorth >= 1 && o.wrong( angleBound, 0.5 / offset ) == 0,
+			       fmt( "%dx%d  the alien, %s: %d sprites, the light's centroid within %.2f deg of %s, at %.0f%%-%.0f%% of its "
+			            "silhouette's offset (%.3f of its size, %.1f px) from the middle (bounds %.1f deg, %.0f%%: half a pixel)",
+			            raster.w, raster.h, orientationName( orientation ), o.measured, o.worstAngle, orientationWay( orientation ),
+			            100.0 * ( 1.0 - o.worstLength ), 100.0 * ( 1.0 + o.worstLength ), shift, offset, angleBound, 100.0 * 0.5 / offset ) );
 		}
 
 		//4. Grow On Approach: Size x ( 1 + 3 g ( 1 - R ) ), here g = 1.
@@ -3262,6 +3433,995 @@ int runSpriteColour( const Perturb& perturb )
 		       fmt( "%dx%d  %d sprite pixels, P7: Hue 1/3 is the untinted light turned 120 deg (off by %.1e), Saturation 0.75 its "
 		            "chroma x1.5 (%.1e), Saturation 0 grey (%.1e); bound 1e-4",
 		            raster.w, raster.h, pixels, worst[ 0 ], worst[ 1 ], worst[ 2 ] ) );
+
+		//Sprite Colour (since v0.2.0). Picture with the alien: every sprite
+		//pixel's light has the picture's chromaticity, (115, 242, 89) / 255;
+		//Hue 1/3 turns that light 120 degrees. Phosphor with the alien: the
+		//phosphor's own two colours, and the share untouched (the fast path).
+		//Picture with no colour to give (the blip, the grey panda) is Phosphor,
+		//to the bit.
+		struct Case
+		{
+			SpriteColour colour;
+			std::string file;
+			double hue;
+			bool tint;
+		};
+		const std::string alien = fixturePath( "alien.png" ), panda = fixturePath( "panda.png" );
+		const Case cases[] = { { SpriteColour::Picture, alien, 0.0, false },  { SpriteColour::Picture, alien, 1.0 / 3.0, false },
+			                   { SpriteColour::Phosphor, alien, 0.0, false }, { SpriteColour::Picture, "", 0.0, false },
+			                   { SpriteColour::Phosphor, "", 0.0, false },    { SpriteColour::Picture, panda, 0.0, false },
+			                   { SpriteColour::Phosphor, panda, 0.0, false } };
+		Floats pic[ 7 ];
+		bool tinted[ 7 ];
+		float flashColour[ 3 ] = {}, afterColour[ 3 ] = {};
+		for( int k = 0; k < 7; ++k )
+		{
+			Rig rig;
+			if( !rig.Init( raster.w, raster.h ) )
+				return 1;
+			spriteScene( rig, 0.0 );
+			rig.plugin.SetSpriteColourSwappedForTest( perturb.colourSwapped );
+			rig.Set( PT_RPM, ParamFromRpm( 120.0 ) );
+			rig.Set( PT_SPRITE_COUNT, 5.0f );
+			rig.Set( PT_SPRITE_SIZE, ParamFromSpriteSize( 0.3 ) );
+			rig.Set( PT_SPRITE_COLOUR, static_cast< float >( cases[ k ].colour ) );
+			rig.Set( PT_SPRITE_HUE, static_cast< float >( cases[ k ].hue ) );
+			setSpriteFile( rig, cases[ k ].file );
+			if( !rig.Render( 40 ) )
+				return 1;
+			pic[ k ]    = rig.Output();
+			tinted[ k ] = rig.plugin.SpriteTintForTest();
+			if( k == 2 )
+			{
+				std::copy( rig.plugin.SpriteFlashColourForTest(), rig.plugin.SpriteFlashColourForTest() + 3, flashColour );
+				std::copy( rig.plugin.SpriteAfterColourForTest(), rig.plugin.SpriteAfterColourForTest() + 3, afterColour );
+			}
+		}
+		const double alienRgb[ 3 ] = { 115.0 / 255.0, 242.0 / 255.0, 89.0 / 255.0 };
+		const double alienSum      = alienRgb[ 0 ] + alienRgb[ 1 ] + alienRgb[ 2 ];
+		double chroma = 0.0, turned = 0.0, phosphorFit = 0.0, pictureFit = 0.0;
+		int lit       = 0;
+		auto fitOf    = [ & ]( const double l[ 3 ] ) {
+			//Least squares of l against a F + b A (the phosphor's flash and
+			//afterglow colours): what is left over.
+			double ff = 0, fa = 0, aa = 0, fl = 0, al = 0;
+			for( int c = 0; c < 3; ++c )
+			{
+				ff += flashColour[ c ] * flashColour[ c ];
+				fa += flashColour[ c ] * afterColour[ c ];
+				aa += afterColour[ c ] * afterColour[ c ];
+				fl += flashColour[ c ] * l[ c ];
+				al += afterColour[ c ] * l[ c ];
+			}
+			const double det = ff * aa - fa * fa, a = ( fl * aa - al * fa ) / det, b = ( al * ff - fl * fa ) / det;
+			double rest      = 0.0;
+			for( int c = 0; c < 3; ++c )
+				rest = std::max( rest, std::fabs( l[ c ] - a * flashColour[ c ] - b * afterColour[ c ] ) );
+			return rest;
+		};
+		const double ca = std::cos( 2.0 * kPi / 3.0 ), sa = std::sin( 2.0 * kPi / 3.0 );
+		for( size_t i = 0; i < static_cast< size_t >( raster.w ) * raster.h; ++i )
+		{
+			double l[ 3 ], h[ 3 ], ph[ 3 ];
+			light( pic[ 0 ], i, l );
+			light( pic[ 1 ], i, h );
+			light( pic[ 2 ], i, ph );
+			const double scale = std::max( { l[ 0 ], l[ 1 ], l[ 2 ] } );
+			if( scale < 0.2 || std::max( { ph[ 0 ], ph[ 1 ], ph[ 2 ] } ) < 0.2 )
+				continue;
+			++lit;
+			const double sum = l[ 0 ] + l[ 1 ] + l[ 2 ];
+			const double mean = sum / 3.0;
+			const double cross[ 3 ] = { k3 * ( l[ 2 ] - l[ 1 ] ), k3 * ( l[ 0 ] - l[ 2 ] ), k3 * ( l[ 1 ] - l[ 0 ] ) };
+			for( int c = 0; c < 3; ++c )
+			{
+				chroma = std::max( chroma, std::fabs( l[ c ] / sum - alienRgb[ c ] / alienSum ) );
+				turned = std::max( turned, std::fabs( h[ c ] - ( l[ c ] * ca + cross[ c ] * sa + mean * ( 1.0 - ca ) ) ) / scale );
+			}
+			phosphorFit = std::max( phosphorFit, fitOf( ph ) / std::max( { ph[ 0 ], ph[ 1 ], ph[ 2 ] } ) );
+			pictureFit  = std::max( pictureFit, fitOf( l ) / scale );
+		}
+		Check( lit > 50 && chroma < 1e-4 && turned < 1e-4,
+		       fmt( "%dx%d  Picture, the alien: %d sprite pixels glow its colour, (115, 242, 89) / 255, to %.1e in chromaticity; Hue 1/3 "
+		            "turns that light 120 deg (off by %.1e); bound 1e-4",
+		            raster.w, raster.h, lit, chroma, turned ) );
+		Check( !tinted[ 2 ] && phosphorFit < 1e-4 && pictureFit > 1e-2 && tinted[ 0 ],
+		       fmt( "%dx%d  Phosphor, the alien: the share is left alone (%s) and every pixel is the phosphor's flash and afterglow to "
+		            "%.1e; Picture's is not (%.1e off them)",
+		            raster.w, raster.h, tinted[ 2 ] ? "NO" : "yes", phosphorFit, pictureFit ) );
+		Check( pic[ 3 ] == pic[ 4 ] && pic[ 5 ] == pic[ 6 ] && !tinted[ 3 ] && !tinted[ 5 ],
+		       fmt( "%dx%d  Picture with the blip, and with the grey panda, draws exactly what Phosphor does, the share untouched: %s, %s",
+		            raster.w, raster.h, pic[ 3 ] == pic[ 4 ] ? "yes" : "NO", pic[ 5 ] == pic[ 6 ] ? "yes" : "NO" ) );
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --sprite-path (no GL): Transit's law and the latecomers' schedule, on the
+// CPU, in double. The harness states each law itself and holds Swarm.cpp to
+// it; the GL checks then hold the painted picture to the same laws.
+//===========================================================================
+/// The harness's own statement of the latecomers' window, scope radii at
+/// Sprite Speed: 85% of the shortest track (one radius; Transit's chord at
+/// |x| = 0.85) over the fastest a sprite can go, 3^Spread x ( 1 + 0.9 ( 1 - Stability ) ).
+double arrivalWindowLaw( swarm::Path path, double spread, double stability )
+{
+	const double shortest = path == swarm::Path::Transit ? 2.0 * std::sqrt( 1.0 - 0.85 * 0.85 ) : 1.0;
+	return 0.85 * shortest / ( std::pow( 3.0, spread ) * ( 1.0 + 0.9 * ( 1.0 - stability ) ) );
+}
+
+int runSpritePath( const Perturb& perturb )
+{
+	std::printf( "\n=== sprite-path: Transit runs straight down a chord from the top rim to the bottom rim at Sprite Speed, entered "
+	             "uniformly across the middle 85%%; latecomers come in on their schedule; both the same at any frame rate\n" );
+	using swarm::Path;
+	using swarm::Settings;
+	using swarm::Swarm;
+	auto configure = [ & ]( Swarm& sw ) {
+		sw.SetEntryWideForTest( perturb.transitEntryWide );
+		sw.SetArrivalNaiveForTest( perturb.arrivalNaive );
+		sw.SetTransitNorthForTest( perturb.transitNorth );
+	};
+	struct Clock
+	{
+		const char* name;
+		std::vector< double > t;
+	};
+
+	//1. Steady: x stays where the track came in; y falls at v from where the
+	//generation started (the first StartOf( 0 ) of its chord in, every later
+	//one at the top rim, sqrt( 1 - x^2 )); it ends at the bottom rim, the
+	//first frame at or after y would pass -sqrt( 1 - x^2 ).
+	{
+		const double v = 0.5;
+		Settings s;
+		s.count     = 1;
+		s.seed      = 11;
+		s.speed     = v;
+		s.stability = 1.0;
+		s.path      = Path::Transit;
+		const std::vector< Clock > clocks = { { "60 fps", frameTimes( 60.0, 24.0, false ) },
+			                                  { "24 fps", frameTimes( 24.0, 24.0, false ) },
+			                                  { "59.94 fps", frameTimes( 59.94, 24.0, false ) },
+			                                  { "jittered 8-30 ms", frameTimes( 0.0, 24.0, true ) } };
+		for( const Clock& clock : clocks )
+		{
+			Swarm sw;
+			configure( sw );
+			double worst = 0.0, widest = 0.0, farthest = 0.0;
+			int generations = 0, late = 0;
+			uint32_t generation = 0;
+			double x0 = 0.0, half = 0.0, ys = 0.0, ts = 0.0;
+			for( size_t i = 0; i < clock.t.size(); ++i )
+			{
+				const double dt = i == 0 ? 0.0 : clock.t[ i ] - clock.t[ i - 1 ];
+				sw.Step( dt, s );
+				const swarm::Placed p = sw.Sprites()[ 0 ];
+				if( i == 0 || p.generation != generation )
+				{
+					if( i > 0 )
+					{
+						const double tStar = ts + ( ys + half ) / v;
+						late += !( clock.t[ i ] >= tStar - 1e-9 && clock.t[ i - 1 ] < tStar + 1e-9 );
+						++generations;
+					}
+					generation = p.generation;
+					x0         = p.x;
+					half       = std::sqrt( 1.0 - x0 * x0 );
+					ys         = i == 0 ? half - Swarm::StartOf( 0 ) * 2.0 * half : half;
+					ts         = clock.t[ i ];
+					widest     = std::max( widest, std::fabs( x0 ) );
+				}
+				worst    = std::max( { worst, std::fabs( p.x - x0 ), std::fabs( p.y - ( ys - v * ( clock.t[ i ] - ts ) ) ) } );
+				farthest = std::max( farthest, std::hypot( p.x, p.y ) );
+			}
+			Check( generations >= 4 && worst < 1e-9 && late == 0 && widest <= 0.85 && farthest <= 1.0 + 1e-12,
+			       fmt( "%-16s %d tracks: x held and y = y_start - v t to %.1e (bound 1e-9); every exit at the bottom rim within a "
+			            "frame (%d late), every entry at the top rim; |x| <= %.4f (band 0.85); never past r = %.15f",
+			            clock.name, generations, worst, late, widest, farthest ) );
+		}
+	}
+
+	//2. Where they come in: uniform across |x| <= 0.85. Every track 32
+	//sprites start in five minutes, against that by Kolmogorov-Smirnov.
+	{
+		Settings s;
+		s.count     = 32;
+		s.seed      = 11;
+		s.speed     = 0.5;
+		s.spread    = 1.0;
+		s.stability = 1.0;
+		s.path      = Path::Transit;
+		Swarm sw;
+		configure( sw );
+		std::vector< double > entries;
+		std::vector< uint32_t > seen( 32, 0xffffffffu );
+		for( int f = 0; f <= 300 * 30; ++f )
+		{
+			sw.Step( f == 0 ? 0.0 : 1.0 / 30.0, s );
+			for( const swarm::Placed& p : sw.Sprites() )
+				if( seen[ p.slot ] != p.generation )
+				{
+					seen[ p.slot ] = p.generation;
+					entries.push_back( p.x );
+				}
+		}
+		std::sort( entries.begin(), entries.end() );
+		const double n = static_cast< double >( entries.size() );
+		double ks      = 0.0;
+		for( size_t i = 0; i < entries.size(); ++i )
+		{
+			const double F = std::clamp( ( entries[ i ] + 0.85 ) / 1.7, 0.0, 1.0 );
+			ks             = std::max( { ks, ( i + 1 ) / n - F, F - i / n } );
+		}
+		const double widest = std::max( -entries.front(), entries.back() );
+		//1.63 / sqrt( n ): Kolmogorov-Smirnov's 1% critical value.
+		Check( n >= 1000 && ks < 1.63 / std::sqrt( n ) && widest <= 0.85 && widest > 0.84,
+		       fmt( "%.0f tracks: x from %.4f to %.4f, uniform over [-0.85, 0.85] by Kolmogorov-Smirnov (D %.4f, 1%% critical %.4f); the "
+		            "shortest track %.3f radii",
+		            n, entries.front(), entries.back(), ks, 1.63 / std::sqrt( n ), 2.0 * std::sqrt( std::max( 0.0, 1.0 - widest * widest ) ) ) );
+	}
+
+	//3. Stability 0: the weave is across the track and only across it -- x
+	//leaves x0 by at most 0.15 x 4 f ( 1 - f ), y is the track's -- so the
+	//sprite stays inside the scope and still only goes south; a sprite that
+	//is held does not sway; and 24, 60, 240 fps and a jittered clock agree.
+	{
+		Settings s;
+		s.count     = 8;
+		s.seed      = 11;
+		s.speed     = 0.08;
+		s.spread    = 0.5;
+		s.stability = 0.0;
+		s.path      = Path::Transit;
+		Swarm sw;
+		configure( sw );
+		double over = -1.0, swing = 0.0, along = 0.0, farthest = 0.0;
+		int north = 0, samples = 0;
+		std::vector< double > lastY( 8, 2.0 );
+		std::vector< uint32_t > lastGen( 8, 0xffffffffu );
+		for( int f = 0; f <= 40 * 60; ++f )
+		{
+			sw.Step( f == 0 ? 0.0 : 1.0 / 60.0, s );
+			for( const swarm::Placed& p : sw.Sprites() )
+			{
+				const double x0   = Swarm::EntryOf( s.seed, p.slot, p.generation );
+				const double half = std::sqrt( 1.0 - x0 * x0 );
+				const double dev  = p.x - x0;
+				over              = std::max( over, std::fabs( dev ) - 0.15 * 4.0 * p.progress * ( 1.0 - p.progress ) );
+				swing             = std::max( swing, std::fabs( dev ) );
+				along             = std::max( along, std::fabs( p.y - ( half - p.progress * 2.0 * half ) ) );
+				farthest          = std::max( farthest, std::hypot( p.x, p.y ) );
+				if( lastGen[ p.slot ] == p.generation )
+					north += p.y >= lastY[ p.slot ];
+				lastGen[ p.slot ] = p.generation;
+				lastY[ p.slot ]   = p.y;
+				++samples;
+			}
+		}
+		Check( over <= 1e-12 && swing > 0.03 && along < 1e-12 && farthest <= 1.0 + 1e-12 && north == 0,
+		       fmt( "Stability 0, 8 sprites for 40 s (%d samples): sideways by up to %.4f radii, never past 0.15 x 4 f (1 - f) (by %.1e); "
+		            "along the track exactly where y says (%.1e); never past r = %.15f; %d steps north",
+		            samples, swing, std::max( over, 0.0 ), along, farthest, north ) );
+
+		const double T              = 6.0;
+		std::vector< Clock > clocks = { { "60 fps", frameTimes( 60.0, T, false ) },
+			                            { "24 fps", frameTimes( 24.0, T, false ) },
+			                            { "240 fps", frameTimes( 240.0, T, false ) },
+			                            { "jittered", frameTimes( 0.0, T - 0.031, true ) } };
+		clocks.back().t.push_back( T );
+		std::vector< std::vector< swarm::Placed > > ends;
+		for( const Clock& clock : clocks )
+		{
+			Swarm c;
+			configure( c );
+			for( size_t i = 0; i < clock.t.size(); ++i )
+				c.Step( i == 0 ? 0.0 : clock.t[ i ] - clock.t[ i - 1 ], s );
+			ends.push_back( c.Sprites() );
+		}
+		double worst = 0.0;
+		int compared = 0;
+		for( size_t k = 0; k < ends[ 0 ].size(); ++k )
+		{
+			bool still = true;
+			for( const auto& e : ends )
+				still = still && e.size() == ends[ 0 ].size() && e[ k ].generation == 0;
+			if( !still )
+				continue;
+			++compared;
+			for( const auto& e : ends )
+				worst = std::max( { worst, std::fabs( e[ k ].x - ends[ 0 ][ k ].x ), std::fabs( e[ k ].y - ends[ 0 ][ k ].y ) } );
+		}
+		Swarm held;
+		configure( held );
+		Settings still = s;
+		still.speed    = 0.0;
+		held.Step( 0.0, still );
+		const auto before = held.Sprites();
+		for( int f = 0; f < 300; ++f )
+			held.Step( 1.0 / 60.0, still );
+		const auto after = held.Sprites();
+		bool unmoved     = before.size() == after.size();
+		for( size_t k = 0; unmoved && k < before.size(); ++k )
+			unmoved = before[ k ].x == after[ k ].x && before[ k ].y == after[ k ].y;
+		Check( compared >= 4 && worst < 1e-9 && unmoved,
+		       fmt( "Stability 0 after %.0f s at 60, 24, 240 fps and jittered: %d sprites on their first track agree to %.1e (bound "
+		            "1e-9); at Sprite Speed 0 they hold still for 5 s without swaying: %s",
+		            T, compared, worst, unmoved ? "yes" : "NO" ) );
+	}
+
+	//4. Latecomers. Start With 3 of 12, steady: the j-th of the 9 latecomers
+	//comes in at the rim (the top rim on Transit) at T = wait / v, its wait in
+	//the j-th ninth of the window W; from there it runs its track at v. The
+	//harness states W and the ninths.
+	for( Path path : { Path::Closing, Path::Transit } )
+	{
+		const double v = 0.2;
+		Settings s;
+		s.count     = 12;
+		s.seed      = 11;
+		s.speed     = v;
+		s.stability = 1.0;
+		s.path      = path;
+		s.startWith = 3;
+		const double W = arrivalWindowLaw( path, 0.0, 1.0 );
+		const std::vector< Clock > clocks = { { "60 fps", frameTimes( 60.0, 6.0, false ) },
+			                                  { "24 fps", frameTimes( 24.0, 6.0, false ) },
+			                                  { "jittered", frameTimes( 0.0, 6.0, true ) } };
+		for( const Clock& clock : clocks )
+		{
+			Swarm sw;
+			configure( sw );
+			sw.Step( 0.0, s );
+			const bool startOk = sw.Sprites().size() == 3 && sw.Waiting() == 9;
+			std::vector< double > arrive( 12, -1.0 );
+			double inWindow = 0.0, worst = 0.0;
+			int outOfPart   = 0;
+			for( uint32_t i = 3; i < 12; ++i )
+			{
+				const double share = Swarm::WaitOf( s, i, static_cast< int >( i ) - 3, 9 ) / W;
+				inWindow           = std::max( inWindow, share );
+				outOfPart += !( share >= ( i - 3 ) / 9.0 && share < ( i - 2 ) / 9.0 );
+			}
+			int lateIn = 0;
+			for( size_t f = 1; f < clock.t.size(); ++f )
+			{
+				sw.Step( clock.t[ f ] - clock.t[ f - 1 ], s );
+				for( const swarm::Placed& p : sw.Sprites() )
+				{
+					if( p.slot < 3 || p.generation != 0 )
+						continue;
+					const double T = Swarm::WaitOf( s, p.slot, static_cast< int >( p.slot ) - 3, 9 ) / v;
+					if( arrive[ p.slot ] < 0.0 )
+					{
+						arrive[ p.slot ] = clock.t[ f ];
+						lateIn += !( clock.t[ f ] >= T - 1e-9 && clock.t[ f - 1 ] < T + 1e-9 );
+					}
+					//Where its track says it is, v ( t - T ) along from the rim.
+					const double gone = v * ( clock.t[ f ] - T );
+					double wx = 0.0, wy = 0.0;
+					if( path == Path::Transit )
+					{
+						const double x0 = Swarm::EntryOf( s.seed, p.slot, 0 ), half = std::sqrt( 1.0 - x0 * x0 );
+						wx = x0;
+						wy = half - gone;
+					}
+					else
+					{
+						wx = ( 1.0 - gone ) * std::sin( p.bearing );
+						wy = ( 1.0 - gone ) * std::cos( p.bearing );
+					}
+					worst = std::max( { worst, std::fabs( p.x - wx ), std::fabs( p.y - wy ) } );
+				}
+			}
+			int arrived = 0;
+			for( uint32_t i = 3; i < 12; ++i )
+				arrived += arrive[ i ] >= 0.0;
+			Check( startOk && arrived == 9 && lateIn == 0 && outOfPart == 0 && inWindow < 1.0 && inWindow >= 8.0 / 9.0 && worst < 1e-9,
+			       fmt( "%s %-9s Start With 3 of 12: 3 on at once, 9 waiting; each came in on the first frame after its moment "
+			            "wait / v (%d not), each wait in its own ninth of W = %.4f radii (%d not; the last at %.1f%%); from the rim, on "
+			            "its track to %.1e (bound 1e-9)",
+			            path == Path::Transit ? "Transit" : "Closing", clock.name, lateIn, W, outOfPart, 100.0 * inWindow, worst ) );
+		}
+	}
+
+	//5. The promise: every latecomer is on the scope before the first of them
+	//leaves (with Start With 0, before any sprite leaves), at every Spread and
+	//Stability, on both paths, at steady controls.
+	{
+		int cases = 0, broken = 0;
+		double tightest = 1e30;
+		std::string what;
+		for( Path path : { Path::Closing, Path::Transit } )
+			for( double spread : { 0.0, 0.35, 1.0 } )
+				for( double stability : { 1.0, 0.75, 0.0 } )
+					for( int startWith : { 0, 4 } )
+					{
+						Settings s;
+						s.count     = 32;
+						s.seed      = 11;
+						s.speed     = 0.1;
+						s.spread    = spread;
+						s.stability = stability;
+						s.path      = path;
+						s.startWith = startWith;
+						Swarm sw;
+						configure( sw );
+						sw.Step( 0.0, s );
+						double lastIn = -1.0, firstOut = -1.0;
+						std::vector< uint32_t > generation( 32, 0 );
+						for( int f = 1; f < 60 * 120 && firstOut < 0.0; ++f )
+						{
+							sw.Step( 1.0 / 60.0, s );
+							const double t = f / 60.0;
+							if( sw.Waiting() > 0 )
+								lastIn = t;
+							for( const swarm::Placed& p : sw.Sprites() )
+								if( static_cast< int >( p.slot ) >= startWith && p.generation > 0 && firstOut < 0.0 )
+									firstOut = t;
+						}
+						++cases;
+						const bool ok = firstOut > 0.0 && lastIn < firstOut;
+						broken += !ok;
+						if( ok )
+							tightest = std::min( tightest, firstOut - lastIn );
+						else
+							what += fmt( " %s/%.2f/%.2f/%d: last in %.2f s, first out %.2f s;", path == Path::Transit ? "Transit" : "Closing",
+							             spread, stability, startWith, lastIn, firstOut );
+					}
+		Check( broken == 0,
+		       fmt( "%d cases (both paths, Spread 0/0.35/1, Stability 1/0.75/0, Start With 0 and 4, 32 sprites at 0.1 radii/s): in %d of "
+		            "them a latecomer left before the last came in; the closest call %.2f s%s",
+		            cases, broken, tightest, what.c_str() ) );
+	}
+
+	//6. Count rising: only enough go on at once to make Start With; the rest
+	//wait. Sprite Speed 0 holds the latecomers back with the rest. And it is
+	//deterministic: two swarms agree to the bit, another seed does not.
+	{
+		Settings s;
+		s.seed      = 11;
+		s.speed     = 0.2;
+		s.startWith = 4;
+		Swarm sw;
+		configure( sw );
+		s.count = 6;
+		sw.Step( 0.0, s );
+		const bool first = sw.Sprites().size() == 4 && sw.Waiting() == 2;
+		for( int f = 0; f < 600; ++f )
+			sw.Step( 1.0 / 60.0, s );
+		const bool allIn = sw.Waiting() == 0;
+		s.count          = 10;
+		sw.Step( 0.0, s );
+		const bool rise = sw.Sprites().size() == 6 && sw.Waiting() == 4;
+		s.count         = 3;
+		sw.Step( 0.0, s );
+		const bool fall = sw.Size() == 3;
+
+		Swarm held;
+		configure( held );
+		Settings still = s;
+		still.count    = 8;
+		still.speed    = 0.0;
+		still.startWith = 2;
+		held.Step( 0.0, still );
+		for( int f = 0; f < 600; ++f )
+			held.Step( 1.0 / 60.0, still );
+		const bool heldBack = held.Waiting() == 6;
+		still.speed         = 0.2;
+		for( int f = 0; f < 600; ++f )
+			held.Step( 1.0 / 60.0, still );
+		const bool released = held.Waiting() == 0;
+
+		Settings d;
+		d.count     = 16;
+		d.seed      = 11;
+		d.speed     = 0.1;
+		d.spread    = 0.6;
+		d.stability = 0.3;
+		d.startWith = 2;
+		d.path      = Path::Transit;
+		const std::vector< double > t = frameTimes( 0.0, 10.0, true );
+		Swarm a, b, c;
+		configure( a );
+		configure( b );
+		configure( c );
+		Settings other = d;
+		other.seed     = 12;
+		int differ = 0, order = 0;
+		for( size_t i = 0; i < t.size(); ++i )
+		{
+			const double dt = i == 0 ? 0.0 : t[ i ] - t[ i - 1 ];
+			a.Step( dt, d );
+			b.Step( dt, d );
+			c.Step( dt, other );
+			const auto pa = a.Sprites(), pb = b.Sprites();
+			differ += pa.size() != pb.size() || a.Waiting() != b.Waiting();
+			for( size_t k = 0; k < std::min( pa.size(), pb.size() ); ++k )
+				differ += pa[ k ].x != pb[ k ].x || pa[ k ].y != pb[ k ].y || pa[ k ].slot != pb[ k ].slot;
+			order += a.Waiting() != c.Waiting();
+		}
+		Check( first && allIn && rise && fall && heldBack && released && differ == 0 && order > 0,
+		       fmt( "Start With 4: Count 0 -> 6 puts 4 on and 2 waiting (%s), all in within 3 s (%s); 6 -> 10 puts none on, 4 waiting "
+		            "(%s); -> 3 keeps 3 (%s). Sprite Speed 0 holds 6 latecomers back for 10 s (%s), and 0.2 lets them in (%s). Two "
+		            "swarms on one jittered clock: %d differences; Seed 12 arrives differently on %d frames",
+		            first ? "yes" : "NO", allIn ? "yes" : "NO", rise ? "yes" : "NO", fall ? "yes" : "NO", heldBack ? "yes" : "NO",
+		            released ? "yes" : "NO", differ, order ) );
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --sprite-transit: Transit's track, read off the phosphor column by column.
+//===========================================================================
+/// One painted column of one sprite: when it was painted, its bearing, and
+/// the centroid of the sprite's flash along it (the pulse's half taken off).
+struct ColumnReading
+{
+	uint32_t generation;
+	double t, theta, r, want;
+};
+
+/// After a frame: every column the antenna crossed in it that runs through
+/// the disc of `radius` at ( px, py ) far enough from its edge, the centre
+/// and the rim, read from the sprites' flash share.
+void readColumns( Rig& rig, double b0, double b1, double px, double py, double radius, double pulse, double t, uint32_t generation,
+                  std::vector< ColumnReading >& out )
+{
+	const double bin = 1.0 / kRanges;
+	for( int64_t k = sweep::floorToInt( b0 ) + 1; k <= sweep::floorToInt( b1 ); ++k )
+	{
+		const int col      = sweep::Column( k, kBearings );
+		const double theta = bearingOfBin( col );
+		const double ux = std::sin( theta ), uy = std::cos( theta );
+		const double along = px * ux + py * uy, off = std::fabs( px * uy - py * ux );
+		if( along <= 0.0 || off > 0.6 * radius )
+			continue;
+		const double c = std::sqrt( radius * radius - off * off );
+		if( along - c < 3.0 * bin || along + c + pulse > 1.0 - 3.0 * bin )
+			continue;
+		const Floats column = rig.PhosphorRect4( col, 0, 1, kRanges );
+		const int first     = std::max( 0, static_cast< int >( ( along - c ) / bin ) - 6 );
+		const int last      = std::min( kRanges - 1, static_cast< int >( ( along + c + pulse ) / bin ) + 6 );
+		double sum = 0.0, moment = 0.0;
+		for( int i = first; i <= last; ++i )
+		{
+			const double value = column[ static_cast< size_t >( i ) * 4 + 2 ];
+			sum += value;
+			moment += value * ( i + 0.5 ) * bin;
+		}
+		if( sum > 0.0 )
+			out.push_back( { generation, t, theta, moment / sum - 0.5 * pulse, along } );
+	}
+}
+
+/// Least squares of r = x0 sin( theta ) + ( y0 - v tau ) cos( theta ): the
+/// straight southward track that best explains the columns.
+bool fitTrack( const std::vector< ColumnReading >& rows, double tStart, double& x0, double& y0, double& v )
+{
+	double A[ 3 ][ 3 ] = {}, b[ 3 ] = {};
+	for( const ColumnReading& c : rows )
+	{
+		const double f[ 3 ] = { std::sin( c.theta ), std::cos( c.theta ), -( c.t - tStart ) * std::cos( c.theta ) };
+		for( int i = 0; i < 3; ++i )
+		{
+			for( int j = 0; j < 3; ++j )
+				A[ i ][ j ] += f[ i ] * f[ j ];
+			b[ i ] += f[ i ] * c.r;
+		}
+	}
+	//Gauss-Jordan on 3 x 3, partial pivoting.
+	for( int col = 0; col < 3; ++col )
+	{
+		int pivot = col;
+		for( int r = col + 1; r < 3; ++r )
+			if( std::fabs( A[ r ][ col ] ) > std::fabs( A[ pivot ][ col ] ) )
+				pivot = r;
+		if( std::fabs( A[ pivot ][ col ] ) < 1e-300 )
+			return false;
+		std::swap( A[ pivot ], A[ col ] );
+		std::swap( b[ pivot ], b[ col ] );
+		for( int r = 0; r < 3; ++r )
+			if( r != col )
+			{
+				const double m = A[ r ][ col ] / A[ col ][ col ];
+				for( int j = 0; j < 3; ++j )
+					A[ r ][ j ] -= m * A[ col ][ j ];
+				b[ r ] -= m * b[ col ];
+			}
+	}
+	x0 = b[ 0 ] / A[ 0 ][ 0 ];
+	y0 = b[ 1 ] / A[ 1 ][ 1 ];
+	v  = b[ 2 ] / A[ 2 ][ 2 ];
+	return true;
+}
+
+int runSpriteTransit( const Perturb& perturb )
+{
+	std::printf( "\n=== sprite-transit: on Transit a sprite runs straight down its chord at Sprite Speed, leaves at the bottom rim and "
+	             "the next comes in at the top -- read off the phosphor column by column; Stability weaves it sideways; Grow On "
+	             "Approach is the range law\n" );
+	const double v      = SpriteSpeedFromParam( ParamFromSpriteSpeed( 0.25 ) );
+	const double pulse  = kMetresPerMicrosecond * PulseFromParam( ParamFromPulse( 0.05 ) ) / 1000.0 / 24.0;
+	const double size   = SpriteSizeFromParam( ParamFromSpriteSize( 0.05 ) );
+	const double radius = 0.25 * size;//the blip at Threshold 0.5: a disc Size / 2 across
+	const uint32_t seed = 11;
+	const double bin    = 1.0 / kRanges;
+
+	//1. Steady. The law, stated here: generation 0 is StartOf( 0 ) of its chord
+	//in, then falls at v; at the bottom rim (the first frame at or after) the
+	//next comes in at the top rim of its own chord and falls at v.
+	const double x0a = swarm::Swarm::EntryOf( seed, 0, 0 ), x0b = swarm::Swarm::EntryOf( seed, 0, 1 );
+	const double ha = std::sqrt( 1.0 - x0a * x0a ), hb = std::sqrt( 1.0 - x0b * x0b );
+	const double ya     = ha - swarm::Swarm::StartOf( 0 ) * 2.0 * ha;
+	const double tStar  = ( ya + ha ) / v;
+	for( const Raster& raster : kRasters )
+		for( double fps : { 60.0, 24.0 } )
+		{
+			Rig rig;
+			rig.fps = fps;
+			if( !rig.Init( raster.w, raster.h ) )
+				return 1;
+			spriteScene( rig );
+			rig.plugin.SetSpriteTransitNorthForTest( perturb.transitNorth );
+			rig.Set( PT_RPM, ParamFromRpm( 120.0 ) );
+			rig.Set( PT_PERSISTENCE, ParamFromPersistence( 0.1 ) );
+			rig.Set( PT_SPRITE_COUNT, 1.0f );
+			rig.Set( PT_SPRITE_SIZE, ParamFromSpriteSize( 0.05 ) );
+			rig.Set( PT_SPRITE_SPEED, ParamFromSpriteSpeed( 0.25 ) );
+			rig.Set( PT_SPRITE_PATH, static_cast< float >( SpritePath::Transit ) );
+			double tRespawn = -1.0, seenRespawn = -1.0;
+			const int frames = static_cast< int >( ( tStar + 0.8 * 2.0 * hb / v ) * fps );
+			std::vector< ColumnReading > rows;
+			for( int f = 0; f < frames; ++f )
+			{
+				const double b0 = rig.plugin.AntennaBins();
+				if( !rig.Render( 1 ) )
+					return 1;
+				const double t = f / fps;
+				if( tRespawn < 0.0 && t >= tStar - 1e-9 )
+					tRespawn = t;
+				if( seenRespawn < 0.0 && !rig.plugin.SpritesForTest().empty() && rig.plugin.SpritesForTest()[ 0 ].generation == 1 )
+					seenRespawn = t;
+				const bool second = tRespawn >= 0.0;
+				const double px   = second ? x0b : x0a;
+				const double py   = second ? hb - v * ( t - tRespawn ) : ya - v * t;
+				readColumns( rig, b0, rig.plugin.AntennaBins(), px, py, radius, pulse, t, second ? 1u : 0u, rows );
+			}
+			double worst = 0.0;
+			int n[ 2 ]   = { 0, 0 };
+			std::vector< ColumnReading > part[ 2 ];
+			for( const ColumnReading& c : rows )
+			{
+				worst = std::max( worst, std::fabs( c.r - c.want ) );
+				part[ c.generation ].push_back( c );
+				++n[ c.generation ];
+			}
+			double fx[ 2 ] = {}, fy[ 2 ] = {}, fv[ 2 ] = {};
+			const bool fitted = n[ 0 ] >= 20 && n[ 1 ] >= 20 && fitTrack( part[ 0 ], 0.0, fx[ 0 ], fy[ 0 ], fv[ 0 ] )
+			                    && fitTrack( part[ 1 ], tRespawn, fx[ 1 ], fy[ 1 ], fv[ 1 ] );
+			//Half a range bin a column: each end of a chord is placed to half a
+			//bin by sampling at bin centres (the 2-tap pulse average splits that
+			//step, it does not remove it), so its midpoint is good to half a bin.
+			//The beam's average over neighbouring columns only smooths it.
+			Check( fitted && worst <= 0.5 * bin,
+			       fmt( "%dx%d %2.0f fps: %d + %d painted columns of the sprite, each where the straight southward track at %.3f radii/s "
+			            "puts it, to %.3f bins (bound 0.5)",
+			            raster.w, raster.h, fps, n[ 0 ], n[ 1 ], v, worst / bin ) );
+			//Fitted freely, the columns give back the track: x held at the entry
+			//point, y falling at Sprite Speed; the second track starts at the top rim.
+			const bool track = fitted && std::fabs( fv[ 0 ] - v ) <= 1e-3 * v && std::fabs( fv[ 1 ] - v ) <= 1e-3 * v
+			                   && std::fabs( fx[ 0 ] - x0a ) <= 0.5 * bin && std::fabs( fx[ 1 ] - x0b ) <= 0.5 * bin
+			                   && std::fabs( fy[ 1 ] - hb ) <= 0.5 * bin;
+			const bool exit = std::fabs( seenRespawn - tRespawn ) < 0.5 / fps;
+			Check( track && exit,
+			       fmt( "%dx%d %2.0f fps: fitted, track 1 runs south at %.5f radii/s along x = %.5f (%.5f), track 2 at %.5f along x = "
+			            "%.5f (%.5f) from y = %.5f (the top rim, %.5f); the first left at the bottom rim at %.3f s (law %.3f)",
+			            raster.w, raster.h, fps, fv[ 0 ], fx[ 0 ], x0a, fv[ 1 ], fx[ 1 ], x0b, fy[ 1 ], hb, seenRespawn, tRespawn ) );
+		}
+
+	//2. Stability 0: the painted columns follow the sprite where the swarm
+	//put it each frame, and those places weave across the track while the
+	//sprite keeps going south and stays inside the scope.
+	for( const Raster& raster : kRasters )
+	{
+		Rig rig;
+		if( !rig.Init( raster.w, raster.h ) )
+			return 1;
+		spriteScene( rig );
+		rig.plugin.SetSpriteTransitNorthForTest( perturb.transitNorth );
+		rig.Set( PT_RPM, ParamFromRpm( 120.0 ) );
+		rig.Set( PT_PERSISTENCE, ParamFromPersistence( 0.1 ) );
+		rig.Set( PT_SPRITE_COUNT, 1.0f );
+		rig.Set( PT_SPRITE_SIZE, ParamFromSpriteSize( 0.05 ) );
+		rig.Set( PT_SPRITE_SPEED, ParamFromSpriteSpeed( 0.25 ) );
+		rig.Set( PT_STABILITY, 0.0f );
+		rig.Set( PT_SPRITE_PATH, static_cast< float >( SpritePath::Transit ) );
+		std::vector< ColumnReading > rows;
+		double swing = 0.0, lastY = 2.0, farthest = 0.0;
+		int north = 0;
+		for( int f = 0; f < 360; ++f )
+		{
+			const double b0 = rig.plugin.AntennaBins();
+			if( !rig.Render( 1 ) )
+				return 1;
+			const auto s = rig.plugin.SpritesForTest()[ 0 ];
+			if( s.generation != 0 )
+				break;
+			readColumns( rig, b0, rig.plugin.AntennaBins(), s.x, s.y, radius, pulse, f / 60.0, 0, rows );
+			swing = std::max( swing, std::fabs( s.x - x0a ) );
+			north += f > 0 && s.y >= lastY;
+			lastY    = s.y;
+			farthest = std::max( farthest, s.range );
+		}
+		double worst = 0.0, straight = 0.0;
+		for( const ColumnReading& c : rows )
+			worst = std::max( worst, std::fabs( c.r - c.want ) );
+		//The best straight southward track through the same columns misses
+		//them by far more: the weave is in the picture.
+		double fx = 0.0, fy = 0.0, fv = 0.0;
+		if( fitTrack( rows, 0.0, fx, fy, fv ) )
+			for( const ColumnReading& c : rows )
+				straight = std::max( straight, std::fabs( c.r - ( fx * std::sin( c.theta ) + ( fy - fv * c.t ) * std::cos( c.theta ) ) ) );
+		Check( rows.size() >= 20 && worst <= 0.5 * bin && swing > 0.03 && north == 0 && farthest <= 1.0,
+		       fmt( "%dx%d  Stability 0: %zu painted columns where the swarm put the sprite to %.3f bins (bound 0.5); it swung %.4f "
+		            "radii across the track (no straight track fits the paint closer than %.1f bins), went north %d times and stayed "
+		            "inside the scope",
+		            raster.w, raster.h, rows.size(), worst / bin, swing, straight / bin, north ) );
+	}
+
+	//3. Grow On Approach on Transit: the range law, Size x ( 1 + 3 g ( 1 - R ) ),
+	//so a sprite is biggest at its closest approach. Held still, squares, Face
+	//Centre so the height runs along the ray, g = 1.
+	for( const Raster& raster : kRasters )
+	{
+		const std::string square = scratchFolder() + "/square.png";
+		writeAlphaSprite( square, 16, 16, []( int, int ) { return 1.0; } );
+		Rig rig;
+		if( !rig.Init( raster.w, raster.h ) )
+			return 1;
+		spriteScene( rig );
+		rig.plugin.SetDecayForTest( false );
+		rig.plugin.SetSpriteTransitGrowByTravelForTest( perturb.transitGrowByTravel );
+		rig.Set( PT_RPM, ParamFromRpm( 120.0 ) );
+		rig.Set( PT_SPRITE_COUNT, 6.0f );
+		rig.Set( PT_SPRITE_SIZE, ParamFromSpriteSize( 0.04 ) );
+		rig.Set( PT_ORIENTATION, static_cast< float >( Orientation::FaceCentre ) );
+		rig.Set( PT_SPRITE_GROW, 1.0f );
+		rig.Set( PT_SPRITE_PATH, static_cast< float >( SpritePath::Transit ) );
+		setSpriteFile( rig, square );
+		if( !rig.Render( 31 ) )
+			return 1;
+		const double side = SpriteSizeFromParam( ParamFromSpriteSize( 0.04 ) );
+		int measured = 0, wrong = 0;
+		std::string what;
+		const auto sprites = rig.plugin.SpritesForTest();
+		for( size_t i = 0; i < sprites.size(); ++i )
+		{
+			const auto& s      = sprites[ i ];
+			const double grown = side * ( 1.0 + 3.0 * ( 1.0 - s.range ) );
+			if( !isolated( sprites, i ) )
+				continue;
+			const double polar = radialExtent( rig, s, 0.75 * grown );
+			const double x0    = swarm::Swarm::EntryOf( seed, s.slot, s.generation );
+			++measured;
+			wrong += std::fabs( polar - grown ) > 1.5 / kRanges;
+			what += fmt( " R %.2f (%.0f%% along, closest %.2f): %.4f (%.4f; at closest %.4f);", s.range, 100.0 * s.progress, std::fabs( x0 ),
+			             polar, grown, side * ( 1.0 + 3.0 * ( 1.0 - std::fabs( x0 ) ) ) );
+		}
+		Check( measured >= 3 && wrong == 0,
+		       fmt( "%dx%d  Transit, Grow On Approach 1, Size %.3f: across, against Size x (1 + 3 (1 - R)) to 1.5 bins:%s", raster.w,
+		            raster.h, side, what.c_str() ) );
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --sprite-arrivals: Start With, read off the phosphor rotation by rotation.
+//===========================================================================
+/// What one rotation painted: the phosphor now less the phosphor a rotation
+/// ago (decay off, so a paint only adds), counted as blobs of the sprites'
+/// afterglow share.
+int rotationBlobs( const Floats& now, const Floats& before )
+{
+	Floats diff( now.size() );
+	for( size_t i = 0; i < now.size(); ++i )
+		diff[ i ] = now[ i ] - before[ i ];
+	return countPolarBlobs( diff, 3, 0.05 );
+}
+
+/// The sprites on the scope, grouped: those whose discs (with `pad` round
+/// them) touch are one blob.
+int clusters( const std::vector< RadarPlugin::SpriteDraw >& s, double reach )
+{
+	std::vector< int > group( s.size() );
+	for( size_t i = 0; i < s.size(); ++i )
+		group[ i ] = static_cast< int >( i );
+	std::function< int( int ) > root = [ & ]( int i ) { return group[ i ] == i ? i : group[ i ] = root( group[ i ] ); };
+	for( size_t i = 0; i < s.size(); ++i )
+		for( size_t j = i + 1; j < s.size(); ++j )
+			if( std::hypot( s[ i ].x - s[ j ].x, s[ i ].y - s[ j ].y ) < reach )
+				group[ root( static_cast< int >( i ) ) ] = root( static_cast< int >( j ) );
+	std::set< int > roots;
+	for( size_t i = 0; i < s.size(); ++i )
+		roots.insert( root( static_cast< int >( i ) ) );
+	return static_cast< int >( roots.size() );
+}
+
+int runSpriteArrivals( const Perturb& perturb )
+{
+	std::printf( "\n=== sprite-arrivals: Start With below Sprite Count puts that many on at once and brings the rest in at the rim at "
+	             "their hashed moments; the painted count follows; all are in before the first latecomer leaves; the same twice\n" );
+	const double bin = 1.0 / kRanges;
+
+	//1. The schedule, steady (Spread 0, Stability 1), so every moment is the
+	//harness's own: Start With 2 of 8 at 0.08 radii/s. Latecomer i comes in
+	//at T_i = wait_i / v, wait_i < W = 0.85 radii; a sprite placed at StartOf( i )
+	//leaves at ( 1 - StartOf( i ) ) / v, a latecomer at T_i + 1 / v. A
+	//rotation with no arrival and no departure in it paints exactly the
+	//sprites on, grouped where their discs touch.
+	for( const Raster& raster : kRasters )
+	{
+		Rig rig;
+		if( !rig.Init( raster.w, raster.h ) )
+			return 1;
+		spriteScene( rig, 0.0 );
+		rig.plugin.SetDecayForTest( false );
+		rig.plugin.SetSpriteArrivalNaiveForTest( perturb.arrivalNaive );
+		rig.Set( PT_RPM, ParamFromRpm( 120.0 ) );//a rotation is 30 frames
+		rig.Set( PT_SPRITE_COUNT, 8.0f );
+		rig.Set( PT_SPRITE_START, 2.0f );
+		rig.Set( PT_SPRITE_SIZE, ParamFromSpriteSize( 0.04 ) );
+		rig.Set( PT_SPRITE_SPEED, ParamFromSpriteSpeed( 0.08 ) );
+		const double v = SpriteSpeedFromParam( ParamFromSpriteSpeed( 0.08 ) );
+		swarm::Settings s;
+		s.count = 8;
+		s.seed  = 11;
+		s.speed = v;
+		s.startWith = 2;
+		const double W = arrivalWindowLaw( swarm::Path::Closing, 0.0, 1.0 );
+		std::vector< double > events;//arrivals and departures, seconds
+		int outOfPart = 0;//the j-th of the 6 latecomers must wait inside the j-th sixth of W
+		for( uint32_t i = 2; i < 8; ++i )
+		{
+			const double wait = swarm::Swarm::WaitOf( s, i, static_cast< int >( i ) - 2, 6 );
+			outOfPart += !( wait >= ( i - 2 ) * W / 6.0 && wait < ( i - 1 ) * W / 6.0 );
+			const double T = wait / v;
+			events.push_back( T );
+			events.push_back( T + 1.0 / v );
+		}
+		for( uint32_t i = 0; i < 2; ++i )
+			events.push_back( ( 1.0 - swarm::Swarm::StartOf( i ) ) / v );
+		const double reach = 2.0 * 0.25 * SpriteSizeFromParam( ParamFromSpriteSize( 0.04 ) ) + 8.0 * bin;
+		const int rotations = static_cast< int >( std::ceil( 1.15 * W / v / 0.5 ) );
+		if( !rig.Render( 1 ) )
+			return 1;
+		Floats before = rig.Phosphor4();
+		int compared = 0, wrong = 0, first = -1, last = -1;//the law's count at the first and last quiet rotation
+		std::string what;
+		for( int n = 0; n < rotations; ++n )
+		{
+			if( !rig.Render( 30 ) )
+				return 1;
+			const Floats now = rig.Phosphor4();
+			const double t0 = n * 0.5, t1 = ( n + 1 ) * 0.5;
+			bool quiet = true;
+			for( double e : events )
+				quiet = quiet && !( e > t0 - 1.0 / 60.0 && e <= t1 + 1.0 / 60.0 );
+			int arrived = 2;
+			for( uint32_t i = 2; i < 8; ++i )
+				arrived += swarm::Swarm::WaitOf( s, i, static_cast< int >( i ) - 2, 6 ) / v <= t0;
+			const int painted = rotationBlobs( now, before );
+			before            = now;
+			if( !quiet )
+				continue;
+			//The law's count, grouped by where the sprites are (the swarm's
+			//positions say only which touch).
+			const int expect = arrived - ( static_cast< int >( rig.plugin.SpritesForTest().size() ) - clusters( rig.plugin.SpritesForTest(), reach ) );
+			++compared;
+			wrong += painted != expect;
+			if( first < 0 )
+				first = arrived;
+			last = arrived;
+			what += fmt( " %.1fs:%d/%d", t1, painted, expect );
+		}
+		Check( compared >= 8 && wrong == 0 && first <= 3 && last == 8 && outOfPart == 0,
+		       fmt( "%dx%d  Start With 2 of 8, W = %.3f radii (%.2f s), each latecomer in its own sixth of it (%d not): %d quiet rotations, "
+		            "the painted count the schedule's in all but %d (painted/law:%s)",
+		            raster.w, raster.h, W, W / v, outOfPart, compared, wrong, what.c_str() ) );
+	}
+
+	//2. The promise, at the sprites' default Spread and Stability, on
+	//Transit, Start With 0: the painted count reaches Count before any sprite
+	//has left. A latecomer is painted within a rotation of coming in, so the
+	//reading lags by up to two rotations (a second): at 0.06 radii/s the law
+	//leaves 1.5 s between the last arrival and the quickest possible exit.
+	//The first exit comes much later than the picture fills, so it is found
+	//on a replica of the plugin's swarm, stepped on the same clock -- one that
+	//agrees with the plugin's own to the bit at the last frame rendered.
+	//And the same settings twice paint the same phosphor.
+	for( const Raster& raster : kRasters )
+	{
+		Rig a, b;
+		if( !a.Init( raster.w, raster.h ) || !b.Init( raster.w, raster.h ) )
+			return 1;
+		for( Rig* rig : { &a, &b } )
+		{
+			spriteScene( *rig, 0.0 );
+			rig->plugin.SetDecayForTest( false );
+			rig->plugin.SetSpriteArrivalNaiveForTest( perturb.arrivalNaive );
+			rig->plugin.SetSpriteWallSeedForTest( perturb.spriteWallSeed );
+			rig->Set( PT_RPM, ParamFromRpm( 120.0 ) );
+			rig->Set( PT_SPRITE_COUNT, 10.0f );
+			rig->Set( PT_SPRITE_START, 0.0f );
+			rig->Set( PT_SPRITE_SIZE, ParamFromSpriteSize( 0.03 ) );
+			rig->Set( PT_SPRITE_SPEED, ParamFromSpriteSpeed( 0.06 ) );
+			rig->Set( PT_SPEED_SPREAD, 0.35f );
+			rig->Set( PT_STABILITY, 0.75f );
+			rig->Set( PT_SPRITE_PATH, static_cast< float >( SpritePath::Transit ) );
+		}
+		const double reach = 2.0 * 0.25 * SpriteSizeFromParam( ParamFromSpriteSize( 0.03 ) ) + 8.0 * bin;
+		if( !a.Render( 1 ) || !b.Render( 1 ) )
+			return 1;
+		Floats before = a.Phosphor4();
+		double full = -1.0;
+		int differ = 0, waitDiffer = 0, frames = 1;
+		for( int n = 0; n < 40 && ( full < 0.0 || n < 12 ); ++n )
+		{
+			for( int f = 0; f < 30; ++f )
+			{
+				if( !a.Render( 1 ) || ( n < 12 && !b.Render( 1 ) ) )
+					return 1;
+				if( n < 12 )
+					waitDiffer += a.plugin.SpritesWaitingForTest() != b.plugin.SpritesWaitingForTest();
+				++frames;
+			}
+			const Floats now = a.Phosphor4();
+			if( n < 12 && b.Phosphor4() != now )
+				++differ;
+			const int painted = rotationBlobs( now, before );
+			before            = now;
+			const auto on     = a.plugin.SpritesForTest();
+			if( full < 0.0 && a.plugin.SpritesWaitingForTest() == 0 && painted == clusters( on, reach ) && on.size() == 10 )
+				full = ( n + 1 ) * 0.5;
+		}
+		//The replica: the settings the plugin derives from these controls, on
+		//the rig's clock (frame f at f / 60 s, so the same frame lengths).
+		swarm::Settings s;
+		s.count     = 10;
+		s.seed      = 11;
+		s.speed     = SpriteSpeedFromParam( ParamFromSpriteSpeed( 0.06 ) );
+		s.spread    = SpeedSpreadFromParam( 0.35f );
+		s.stability = StabilityFromParam( 0.75f );
+		s.path      = swarm::Path::Transit;
+		s.startWith = 0;
+		swarm::Swarm replica;
+		replica.SetArrivalNaiveForTest( perturb.arrivalNaive );
+		double firstOut = -1.0;
+		bool same       = false;
+		for( int f = 0; f < 60 * 120 && firstOut < 0.0; ++f )
+		{
+			replica.Step( f == 0 ? 0.0 : f / 60.0 - ( f - 1 ) / 60.0, s );
+			if( f == frames - 1 )
+			{
+				const auto mine = replica.Sprites();
+				const auto its  = a.plugin.SpritesForTest();
+				same            = mine.size() == its.size() && replica.Waiting() == a.plugin.SpritesWaitingForTest();
+				for( size_t k = 0; same && k < mine.size(); ++k )
+					same = mine[ k ].x == its[ k ].x && mine[ k ].y == its[ k ].y;
+			}
+			for( const swarm::Placed& p : replica.Sprites() )
+				if( p.generation > 0 && firstOut < 0.0 )
+					firstOut = f / 60.0;
+		}
+		Check( full > 0.0 && firstOut > 0.0 && full < firstOut && same,
+		       fmt( "%dx%d  Transit, Start With 0 of 10, Spread 0.35, Stability 0.75: a rotation painted all 10 by %.1f s, and the "
+		            "first left at %.2f s (the swarm stepped on, which matched the plugin's to the bit at %.2f s: %s)",
+		            raster.w, raster.h, full, firstOut, ( frames - 1 ) / 60.0, same ? "yes" : "NO" ) );
+		Check( differ == 0 && waitDiffer == 0,
+		       fmt( "%dx%d  two instances, the same settings and clock: %d of 12 rotations' phosphor differ, %d frames' latecomers differ",
+		            raster.w, raster.h, differ, waitDiffer ) );
 	}
 	return Verdict();
 }
@@ -3286,6 +4446,8 @@ const std::vector< CheckEntry >& checks()
 		{ "sprites", runSprites, false },         { "sprite-speed", runSpriteSpeed, false },
 		{ "sprite-beam", runSpriteBeam, false },  { "sprite-repeat", runSpriteRepeat, false },
 		{ "sprite-colour", runSpriteColour, false },
+		{ "sprite-path", runSpritePath, true },   { "sprite-transit", runSpriteTransit, false },
+		{ "sprite-arrivals", runSpriteArrivals, false },
 	};
 	return list;
 }
@@ -3341,6 +4503,20 @@ int runNegative( bool offlineOnly = false )
 	add( "sprite-beam", runSpriteBeam, "never fade the sprites' share", []( Perturb& p ) { p.spriteNoFade = true; } );
 	add( "sprite-repeat", runSpriteRepeat, "salt the sprites' seed from the wall clock", []( Perturb& p ) { p.spriteWallSeed = true; } );
 	add( "sprite-colour", runSpriteColour, "turn Hue the other way", []( Perturb& p ) { p.spriteHueBackwards = true; } );
+	//Since v0.2.0.
+	add( "sprites", runSprites, "draw Head In as Face Centre", []( Perturb& p ) { p.headInAsFace = true; } );
+	add( "sprite-colour", runSpriteColour, "read the picture's colour as BGR", []( Perturb& p ) { p.colourSwapped = true; } );
+	add( "sprite-path", runSpritePath, "spread Transit's entry points across the whole width",
+	     []( Perturb& p ) { p.transitEntryWide = true; } );
+	add( "sprite-path", runSpritePath, "spread the latecomers over one crossing at Sprite Speed, ignoring Spread and the surge",
+	     []( Perturb& p ) { p.arrivalNaive = true; } );
+	add( "sprite-transit", runSpriteTransit, "run Transit's tracks north", []( Perturb& p ) { p.transitNorth = true; } );
+	add( "sprite-transit", runSpriteTransit, "grow Transit's sprites by the share of the track done, not by range",
+	     []( Perturb& p ) { p.transitGrowByTravel = true; } );
+	add( "sprite-arrivals", runSpriteArrivals, "spread the latecomers over one crossing at Sprite Speed, ignoring Spread and the surge",
+	     []( Perturb& p ) { p.arrivalNaive = true; } );
+	add( "sprite-arrivals", runSpriteArrivals, "salt the sprites' seed from the wall clock",
+	     []( Perturb& p ) { p.spriteWallSeed = true; } );
 
 	if( offlineOnly )
 		cases.erase( std::remove_if( cases.begin(), cases.end(), []( const Case& c ) { return !isOffline( c.name ); } ), cases.end() );
@@ -3402,8 +4578,9 @@ int main( int argc, char** argv )
 			             "  --script PATH     cues for --pipe/--film: 'frame Name value'\n\n"
 			             "  checks: --arc --pulse --sweep --persist --r4 --over-check --prime --resize --clock --state\n"
 			             "          --sprite-file --sprite-threshold --sprites --sprite-speed --sprite-beam\n"
-			             "          --sprite-repeat --sprite-colour\n"
-			             "          --sweep-law --cues --names --sprite-utf16 --sprite-motion (no GL)   --negative   --bench\n"
+			             "          --sprite-repeat --sprite-colour --sprite-transit --sprite-arrivals\n"
+			             "          --sweep-law --cues --names --sprite-utf16 --sprite-motion --sprite-path (no GL)\n"
+			             "          --negative   --bench\n"
 			             "  --offline         the checks and negative controls that need no GL context (CI)\n" );
 			return 0;
 		}
@@ -3512,6 +4689,17 @@ int main( int argc, char** argv )
 					line += ", \"needs\": {\"Sprite Count\": 10.0}";
 				if( p.name == "Orientation" )
 					line += ", \"note\": \"needs an asymmetric Sprite File to show (tools/fixtures/alien.png)\"";
+				//Since v0.2.0. Start With is an integer like Sprite Count; it and
+				//Path act only on sprites that START after the change.
+				if( p.name == "Start With" )
+					line += ", \"probe\": [0, 4], \"note\": \"acts only when sprites start (a new instance, or Sprite Count rising): on a "
+					        "running layer a probe changes nothing until Sprite Count is raised from below it (the gate's blind spot)\"";
+				if( p.name == "Path" )
+					line += ", \"note\": \"latched per sprite: one in flight finishes on its old path, so a change shows as tracks end "
+					        "(25 s a crossing at the default Sprite Speed); set it before raising Sprite Count, or raise Sprite Speed\"";
+				if( p.name == "Sprite Colour" )
+					line += ", \"note\": \"needs a coloured Sprite File to show (tools/fixtures/alien.png is green); the blip and grey "
+					        "pictures fall back to Phosphor\"";
 				if( p.name == "Sprite File" )
 					line += ", \"note\": \"a fixture to load: tools/fixtures/alien.png (empty is the built-in blip)\"";
 				if( p.name == "Direction" || p.name == "RPM" || p.name == "Persistence" || p.name == "Flash" )

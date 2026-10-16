@@ -45,7 +45,10 @@ const std::vector< unsigned int >& HostOrder( bool effect )
 		//Sprites (radar#5), both plugins, after every v0.1.0 control and before
 		//the About block: no released control's host index moves, and Arena
 		//stores a composition's values by name anyway (vectrix's NOTES).
-		for( unsigned int id = PT_SPRITE_FILE; id <= PT_SPRITE_GROW; ++id )
+		//Path, Start With and Sprite Colour (since v0.2.0) follow Grow On
+		//Approach the same way, so the Sprites group stays one run and only
+		//the About buttons move.
+		for( unsigned int id = PT_SPRITE_FILE; id <= PT_SPRITE_COLOUR; ++id )
 			order.push_back( id );
 		for( unsigned int id = PT_ABOUT_TEXT; id < PT_COUNT; ++id )
 			order.push_back( id );
@@ -67,7 +70,7 @@ const char* GroupOf( unsigned int id )
 		return "Audio";
 	if( id <= PT_MIX )
 		return "Scope";
-	if( id <= PT_SPRITE_GROW )
+	if( id <= PT_SPRITE_COLOUR )
 		return "Sprites";
 	return "About";
 }
@@ -212,6 +215,10 @@ double SpriteSaturationFromParam( float v )
 double SpriteGrowFromParam( float v )
 {
 	return clamp01( v );
+}
+int SpriteStartFromParam( float v )
+{
+	return std::clamp( static_cast< int >( std::lround( v ) ), 0, kMaxSprites );
 }
 
 int OptionIndex( float value, int count )

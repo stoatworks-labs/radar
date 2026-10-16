@@ -81,6 +81,11 @@ enum ParamId : unsigned int
 	PT_SPRITE_HUE,
 	PT_SPRITE_SATURATION,
 	PT_SPRITE_GROW,
+	// Since v0.2.0 (radar#5's follow-ups), appended so no released control's
+	// host index moves: only the About block's buttons shift.
+	PT_SPRITE_PATH,     ///< Closing (the default: rim to centre) or Transit (top to bottom)
+	PT_SPRITE_START,    ///< FF_TYPE_INTEGER 0..kMaxSprites: how many are on screen when they start
+	PT_SPRITE_COLOUR,   ///< Phosphor (the default) or Picture (the picture's average colour)
 
 	// -- The Stoatworks About block: a text line, then one button per link.
 	PT_ABOUT_TEXT,
@@ -105,6 +110,23 @@ enum class Orientation
 {
 	Upright = 0,///< every sprite's top towards the top of the screen (north)
 	FaceCentre, ///< every sprite's bottom towards the centre: its top points outward
+	HeadIn,     ///< every sprite's top towards the centre (since v0.2.0; appended, so 0 and 1 keep their meaning)
+	Count
+};
+
+/// Where the sprites go (since v0.2.0).
+enum class SpritePath
+{
+	Closing = 0,///< in from the rim on a hashed bearing to the centre: v0.2.0's, the default
+	Transit,    ///< the radar heading north through still objects: in at the top, straight down, out at the bottom
+	Count
+};
+
+/// What colour the sprites start from (since v0.2.0).
+enum class SpriteColour
+{
+	Phosphor = 0,///< the phosphor's own colours: v0.2.0's, the default
+	Picture,     ///< the picture's average colour (a grey one, or the blip, falls back to Phosphor)
 	Count
 };
 
@@ -197,6 +219,9 @@ double SpriteHueFromParam( float v );
 double SpriteSaturationFromParam( float v );
 /// 0 the same size all the way in .. 1 four times the size at the centre.
 double SpriteGrowFromParam( float v );
+/// Start With is an integer parameter, 0..kMaxSprites (real value); its
+/// default, kMaxSprites, is "all of them": v0.2.0's behaviour.
+int SpriteStartFromParam( float v );
 
 int OptionIndex( float value, int count );
 
