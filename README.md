@@ -126,9 +126,10 @@ covering the frame. Rendered by `ratest`.</sub>
   (*Closing*, the rim-to-centre of v0.2.0, or *Transit*: the radar is heading
   north through things that aren't moving, so each sprite comes in at the top,
   slides straight down and leaves at the bottom), **Start With** (0–32: how many
-  are on the scope when the sprites start; the rest come in at the rim one at a
-  time and are all on before the first one leaves; 32, the default, is all of
-  them at once, as before), a third Orientation, *Head In* (the top towards the
+  are on the scope when the sprites start, near the rim; the rest come in at the
+  rim one at a time and are all on before the first one leaves; 32, the default,
+  is all of them at once, spread along the way in, as before), a third
+  Orientation, *Head In* (the top towards the
   centre), and **Sprite Colour** (*Phosphor*, as before, or *Picture*: the
   picture's average colour). Every default does exactly what v0.2.0 did.
 
@@ -217,11 +218,12 @@ What's measured, on this Mac, at 1280x720 and 320x180 on the GPU and at
 | sprite repeat | two instances, twelve wandering, growing, tinted alien sprites over clutter and noise: the same frame to the bit |
 | sprite colour | Hue 1/3 is the untinted light turned 120 degrees, Saturation 0.75 its chroma x1.5, Saturation 0 grey, each to 10⁻⁶ |
 | transit (new) | read off the phosphor column by column at 60 and 24 fps, a sprite runs straight down its chord: every painted column within 0.25 range bins of the track, the fitted speed 0.24999–0.25000 radii/s against 0.25, its x within 0.04 bins of the entry point; it leaves at the bottom rim on the frame the law says and the next comes in at the top rim; on the CPU the law holds to 10⁻¹⁴ at 60, 24, 59.94 fps and jittered frames; 2,273 entry points are uniform over the middle 85% (Kolmogorov-Smirnov 0.013 against 0.034); the weave at Stability 0 is across the track only and never leaves the scope; Grow On Approach on Transit follows the range law to under 0.6 range bins |
-| start with (new) | Start With 2 of 8: the count painted each rotation is the schedule's in all 18 rotations with no arrival or exit in them, rising 2, 4, 5, 6, 8; in 36 cases over both paths, every Spread and Stability, nobody leaves before the last latecomer is in (closest call 1.7 s); a latecomer comes in at the rim on its exact moment at any frame rate (to 10⁻¹⁴); Sprite Speed 0 holds them back; two instances paint the same phosphor |
+| start with (new) | Start With 2 of 8: the count painted each rotation is the schedule's in all 16 rotations with no arrival or exit in them, rising 2, 4, 5, 6, 8; in 108 cases (both paths, every Spread and Stability, Start With 0, 3 and 7, Sprite Count jumped up or dragged up a step a frame) no sprite leaves before the last latecomer is in (closest call 0.25 s); dragged up, the latecomers still each arrive in their own share of the window; a latecomer comes in at the rim on its exact moment at any frame rate (to 10⁻¹⁴); Sprite Speed 0 holds them back; two instances paint the same phosphor |
+| stability (new) | a jump of Stability from 1 to 0 and back moves no sprite at all in the frame it lands on, on either path (it moved them up to 0.31 radii before review); the next sprite takes the new weave |
 | head in (new) | the top-half sprite's light sits within 0.6 degrees of inward on both paths, and the asymmetric alien's within 0.9 degrees, at 98–102% of its silhouette's offset |
 | picture colour (new) | the alien's sprites glow its own green, (115, 242, 89) / 255, to 3×10⁻⁷ in chromaticity, and Hue turns that; on Phosphor every sprite pixel is the phosphor's flash and afterglow to 4×10⁻⁷; the blip and the grey panda on Picture draw exactly what Phosphor does |
-| negative controls | **28** deliberately wrong models, **all 28** detected |
-| mutants | **10** one-character changes (four GLSL, six C++), **all 10** caught |
+| negative controls | **32** deliberately wrong models, **all 32** detected |
+| mutants | **11** one-character changes (four GLSL, seven C++), **all 11** caught |
 | dead controls | **71** parameters over both plugins, all live |
 
 Render cost (`ratest --bench`, the defaults, the median frame, on a machine

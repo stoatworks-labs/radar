@@ -42,27 +42,43 @@
     the scope.
 
     **A control never moves a sprite by itself.** Speed, Speed Spread and
-    Stability set how fast the distance grows, never the distance: moving a
-    slider changes where they are going, not where they are. Path is LATCHED
-    per generation: a sprite in flight finishes on the path it started on and
-    the next one takes the new path. (Seed is the exception: it re-hashes
-    every bearing and entry point.)
+    Stability's surge set how fast the distance grows, never the distance:
+    moving a slider changes where they are going, not where they are. What
+    would place a sprite is LATCHED per generation, when it comes in: its Path
+    (a sprite in flight finishes on the path it started on) and its weave's
+    share of Stability (a jump of Stability from 1 to 0 would otherwise throw
+    a Transit sprite 0.15 radii sideways in one frame, and a Closing one 0.35
+    rad round in bearing, which v0.2.0 did). The next generation takes the
+    controls as they are. (Seed is the exception: it re-hashes every bearing
+    and entry point.)
 
-    **Starting.** When slots are made -- the first frame, or Sprite Count
-    raised -- up to Start With of them are put on screen at once, part-way
-    along their tracks, staggered by the golden ratio (v0.2.0's start, which
-    the default, "all of them", keeps). The rest are LATECOMERS: each waits a
-    hashed distance out beyond the rim, counted down at Sprite Speed, and
-    comes in at the rim (the top, on Transit) when it runs out. The window
-    (ArrivalWindow()) is 85% of the shortest track at the fastest any sprite
-    can go, so at steady controls every latecomer is on the scope before the
-    first of them can leave. It is split into as many equal parts as there are
-    latecomers, and the j-th comes in at a hashed point of the j-th part: an
-    irregular trickle, never a clump and never a long gap, whose last arrival
-    is always in the final part (pure uniform draws left seed 11's last of
-    nine at 58% of the window). A wait counts down at Sprite Speed, so Sprite
-    Speed 0 holds the latecomers back as it holds the rest still, and a
-    faster Speed brings them in sooner.
+    **Starting: a fill.** When slots are made -- the first frame, or Sprite
+    Count raised, at once or a step at a time as a slider sends it -- a FILL
+    starts unless one is still running: one window, ArrivalWindow(), 85% of
+    the shortest track at the fastest any sprite can go, counted down at
+    Sprite Speed from the moment the fill started. Up to Start With of the new
+    slots go on the scope at once, staggered by the golden ratio; the rest are
+    LATECOMERS, each waiting a hashed distance out beyond the rim and coming
+    in at the rim (the top, on Transit) when it runs out.
+
+    - The latecomers share what is left of the fill's window: every time one
+      is added, all those still waiting are spread over it again, the j-th of
+      m (by slot) at a hashed point of the j-th m-th. An irregular trickle,
+      never a clump and never a long gap, the last always in the final part
+      -- whether Sprite Count jumped to 12 or was dragged there one step a
+      frame. (Pure uniform draws left seed 11's last of nine at 58% of the
+      window; stratifying each rise on its own clumped a drag.)
+    - **Nobody leaves before the last latecomer is in.** A latecomer that
+      arrives at t >= 0 cannot cover the shortest track before the window's
+      end. And while Start With is below "all of them", the ones put on at
+      once are kept to the first stretch of their track, at most
+      L - 0.85 x the shortest track along it (the outer 15% of the radius
+      closing), so they cannot leave before the window's end either. At Start
+      With's default (kStartAll) they are spread along the whole track as in
+      v0.2.0, which is fine, because then nothing waits.
+    - A wait counts down at Sprite Speed, so Sprite Speed 0 holds the
+      latecomers back as it holds the rest still, and a faster Speed brings
+      them in sooner. The promise holds at steady Spread and Stability.
 */
 namespace radar::swarm
 {
@@ -79,8 +95,9 @@ constexpr double kTransitBand = 0.85;
 constexpr double kTransitWeave = 0.15;
 /// The latecomers arrive within this share of the quickest crossing.
 constexpr double kArrivalShare = 0.85;
-/// "All of them": Start With at its default.
-constexpr int kStartAll = 1 << 30;
+/// "All of them": Start With at its default and top (Sprite Count's top too).
+/// At this or above, every new slot goes on at once, spread along its track.
+constexpr int kStartAll = 32;
 
 struct Settings
 {
@@ -159,6 +176,21 @@ public:
 	{
 		naiveForTest = on;
 	}
+	/// --sprite-path's negative controls: the ones on at once staggered along
+	/// the whole track even with latecomers to come; the weave read live from
+	/// Stability every frame; each rise's latecomers stratified on their own.
+	void SetStaggerWholeForTest( bool on )
+	{
+		staggerWholeForTest = on;
+	}
+	void SetWeaveLiveForTest( bool on )
+	{
+		weaveLiveForTest = on;
+	}
+	void SetBatchOnlyForTest( bool on )
+	{
+		batchOnlyForTest = on;
+	}
 
 private:
 	struct Slot
@@ -167,18 +199,27 @@ private:
 		double age          = 0.0;///< seconds since this generation started
 		double travelled    = 0.0;///< scope radii along its track
 		double wait         = 0.0;///< a latecomer's distance still to come, at Sprite Speed; > 0: not on the scope yet
-		Path path           = Path::Closing;
+		Path path           = Path::Closing;///< latched when this generation started
+		double loose        = 0.0;///< 1 - Stability when this generation started: its weave's share
 	};
 
 	double entryOf( uint32_t seed, uint32_t slot, uint32_t generation ) const;
 	double lengthOf( Path path, uint32_t seed, uint32_t slot, uint32_t generation ) const;
+	/// A generation starts: latch what places it.
+	static void startGeneration( Slot& s, const Settings& settings );
+	/// Every latecomer still waiting, spread over what is left of the fill.
+	void spreadWaits( const Settings& settings );
 
 	std::vector< Slot > slots;
 	Settings last;
-	bool perFrameForTest = false;
-	bool northForTest    = false;
-	bool wideForTest     = false;
-	bool naiveForTest    = false;
+	double fillLeft = 0.0;///< what is left of the current fill's window, scope radii at Sprite Speed
+	bool perFrameForTest     = false;
+	bool northForTest        = false;
+	bool wideForTest         = false;
+	bool naiveForTest        = false;
+	bool staggerWholeForTest = false;
+	bool weaveLiveForTest    = false;
+	bool batchOnlyForTest    = false;
 };
 
 } // namespace radar::swarm

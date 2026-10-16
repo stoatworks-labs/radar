@@ -65,8 +65,8 @@ Read `AGENTS.md` before touching the sweep (`Sweep.h`), the per-column timing in
   Fixtures in `tools/fixtures/` (`make_fixtures.py` draws them).
 - One raster only: add `--size WxH`. The software renderer:
   `RATEST_RENDERER=software ./build/ratest --arc --size 320x180`.
-- **The checks can fail**: `--negative` (28 wrong models), `tools/mutate.sh`
-  (one character of GLSL, of Sweep.h, Swarm, Radar.cpp and SpriteImage: 10 mutants).
+- **The checks can fail**: `--negative` (32 wrong models), `tools/mutate.sh`
+  (one character of GLSL, of Sweep.h, Swarm, Radar.cpp and SpriteImage: 11 mutants).
 - What CI runs: `--offline` and `tools/glslc.sh`.
 - No dead controls: `python3 tools/sweep.py` (71 parameters over both plugins; the
   sprite controls are swept with ten sprites on, Orientation, Sprite File and Sprite Colour
@@ -90,8 +90,10 @@ Read `AGENTS.md` before touching the sweep (`Sweep.h`), the per-column timing in
   lazily on the render thread. Sprite Count defaults to 0: off.
 - **Since v0.2.0 (unreleased): Path, Start With, Sprite Colour** appended after Grow On
   Approach (only the About buttons moved), and Head In appended to Orientation. Every default
-  is v0.2.0's picture bit for bit (AGENTS.md says how that was shown). Path is latched per
-  generation; Start With's latecomers wait a distance counted at Sprite Speed; the picture's
+  is v0.2.0's picture bit for bit (AGENTS.md says how that was shown). Path and the weave's
+  share of Stability are latched per generation; Start With is one window per fill, its
+  latecomers waiting a distance counted at Sprite Speed, and below 32 the ones on at once keep
+  to the first stretch of their track so nobody leaves before the last is in; the picture's
   colour is a mask-weighted mean computed at load. No shader changed.
 - **Host indices are not ParamIds.** Each plugin declares its own dense list
   (`HostOrder()`), About block LAST in both, so the "User guide" button moved no

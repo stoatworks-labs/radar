@@ -222,6 +222,12 @@ public:
 	{
 		swarm.SetArrivalNaiveForTest( on );
 	}
+	/// --sprite-arrivals' second negative control: the ones on at once
+	/// staggered along the whole track even with latecomers to come.
+	void SetSpriteStaggerWholeForTest( bool on )
+	{
+		swarm.SetStaggerWholeForTest( on );
+	}
 	/// --sprite-colour's second negative control: the picture's colour read
 	/// as BGR, the way a DIB hands its channels over.
 	void SetSpriteColourSwappedForTest( bool on )

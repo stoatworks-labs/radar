@@ -21,7 +21,7 @@ east with the trail fading behind it.*
 > degrees; its streak is c tau / 2 long to 8 × 10⁻⁵ of a range bin, running outward; every bearing
 > is painted exactly once a rotation at whole, fractional and jittered frame rates; equal targets
 > fall with range with a slope of −3.9998 against the radar equation's −4, and are flat with STC at
-> n = 4; the phosphor holds its two-term decay to 2 × 10⁻⁷. Twenty-eight models that are wrong on purpose are
+> n = 4; the phosphor holds its two-term decay to 2 × 10⁻⁷. Thirty-two models that are wrong on purpose are
 > each shown to fail their check, and one-character mutations of the shipped shaders and code are caught.
 > All 71 parameters over both plugins are shown to change the picture. **The checks verify the
 > stated model, not a real radar**: the phosphor's time constants are stretched to video rates on
@@ -283,7 +283,9 @@ its speed surges and sags (between 0.1 and 1.9 times its own at 0) and it weaves
 up to 20 degrees of bearing. On Transit the weave is across the track, up to 0.15 of the radius,
 dying away towards the rim so a sprite never wanders off the scope. Speed, Speed Spread and
 Stability change how fast the sprites are going, never where they are, so moving a slider never
-makes them jump.
+makes them jump. The weave is the one part of Stability that would: each sprite keeps the weave it
+started with, and the next one takes the new setting. (In v0.2.0 a sudden change of Stability
+threw every sprite round in bearing in one frame.)
 
 **Orientation** (*Upright*, *Face Centre*, *Head In*). *Upright*: every sprite the right way up on
 the screen. *Face Centre*: its bottom towards the centre of the scope, like figures standing on a
@@ -328,15 +330,21 @@ Rendered by the offline harness.*
 
 **Start With** (0 to 32, default 32; new since v0.2.0, not released yet). How many sprites are on
 the scope when they start, or when you raise Sprite Count. The rest arrive at the rim (the top, on
-Transit) one at a time, at irregular moments, and all of them are on the scope a little before the
-first one leaves. They arrive within 85% of the quickest crossing anyone could make: the shortest
+Transit) one at a time, at irregular moments, and every sprite is on the scope before the first one
+leaves. The latecomers arrive within 85% of the quickest crossing anyone could make: the shortest
 track (one radius closing, about half the diameter on Transit) at the fastest a sprite can go, which
 is Sprite Speed × 3^Speed Spread with Stability's surge on top. At the defaults that's about twelve
 seconds, and the last one turns up a couple of seconds before anyone could possibly get to the
-other side. The default, 32, means all of them at once, which is what v0.2.0 did. If Sprite Count
-goes up while sprites are already on, only enough appear at once to make up Start With, and the
-rest arrive the same way. At Sprite Speed 0 the latecomers wait with everything else. It only acts
-when sprites start, so moving it on a running layer does nothing until Sprite Count goes up.
+other side. So that the ones on at the start can't beat them to it, they start near the rim: in the
+outer 15% of the radius closing, or the first part of their track on Transit. It doesn't matter
+whether you raise Sprite Count in one go or drag the slider up a step at a time: it's one build-up,
+with the latecomers spread over whatever is left of the same window.
+
+The default, 32, means all of them at once, spread right along the way in, which is what v0.2.0 did.
+If Sprite Count goes up while sprites are already on, only enough appear at once to make up Start
+With, and the rest arrive the same way; the ones already on carry on as they were. At Sprite Speed
+0 the latecomers wait with everything else. It only acts when sprites start, so moving it on a
+running layer does nothing until Sprite Count goes up.
 
 **Sprite Colour** (*Phosphor*, *Picture*; new since v0.2.0, not released yet). *Phosphor* is the
 phosphor's colours, as above. *Picture* takes the average colour of your picture (the parts that

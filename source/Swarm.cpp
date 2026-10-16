@@ -118,6 +118,26 @@ double Swarm::lengthOf( Path path, uint32_t seed, uint32_t slot, uint32_t genera
 	return 2.0 * std::sqrt( std::max( 0.0, 1.0 - x * x ) );
 }
 
+void Swarm::startGeneration( Slot& s, const Settings& settings )
+{
+	s.path  = settings.path;
+	s.loose = 1.0 - std::clamp( settings.stability, 0.0, 1.0 );
+}
+
+void Swarm::spreadWaits( const Settings& settings )
+{
+	std::vector< size_t > waiting;
+	for( size_t i = 0; i < slots.size(); ++i )
+		if( slots[ i ].wait > 0.0 )
+			waiting.push_back( i );
+	const double m = static_cast< double >( waiting.size() );
+	for( size_t j = 0; j < waiting.size(); ++j )
+	{
+		const uint32_t i = static_cast< uint32_t >( waiting[ j ] );
+		slots[ i ].wait  = fillLeft * ( static_cast< double >( j ) + drawOf( settings.seed, i, 0 ).arrive ) / m;
+	}
+}
+
 int Swarm::Waiting() const
 {
 	int waiting = 0;
@@ -134,31 +154,50 @@ void Swarm::Step( double dt, const Settings& settings )
 		slots.pop_back();
 	if( static_cast< int >( slots.size() ) < count )
 	{
+		//A fill starts, unless one is still running: one window for every
+		//slot made until it runs out (a slider dragged up a step a frame is
+		//one fill, not twelve).
+		if( !( fillLeft > 0.0 ) )
+			fillLeft = naiveForTest ? shortestTrack( settings.path ) : ArrivalWindow( settings );
 		//New slots: enough of them on the scope at once to bring it up to
 		//Start With (never fewer than none, never more than are new), each
 		//part-way along its track by the golden ratio; the rest latecomers.
-		//At Start With's default every one is on at once: v0.2.0's start.
 		const int onScreen = static_cast< int >( slots.size() ) - Waiting();
 		const int fresh    = count - static_cast< int >( slots.size() );
 		const int placeNow = std::clamp( settings.startWith - onScreen, 0, fresh );
 		const int late     = fresh - placeNow;
+		//Building up (Start With below all of them): the ones on at once keep
+		//to the first stretch of their track, so none of them can leave before
+		//the fill's last latecomer is in. All at once: v0.2.0's start, anywhere
+		//along it -- nothing waits, so there is nothing to wait for.
+		const bool buildUp = settings.startWith < kStartAll && !staggerWholeForTest;
 		for( int made = 0; made < fresh; ++made )
 		{
 			const uint32_t i = static_cast< uint32_t >( slots.size() );
 			Slot s;
-			s.path = settings.path;
+			startGeneration( s, settings );
 			if( made < placeNow )
-				s.travelled = StartOf( i ) * lengthOf( s.path, settings.seed, i, 0 );
-			else if( naiveForTest )
-				s.wait = shortestTrack( settings.path ) * ( made - placeNow + drawOf( settings.seed, i, 0 ).arrive ) / late;
-			else
+			{
+				const double length = lengthOf( s.path, settings.seed, i, 0 );
+				s.travelled = StartOf( i ) * ( buildUp ? length - kArrivalShare * shortestTrack( s.path ) : length );
+			}
+			else if( batchOnlyForTest )
 				s.wait = WaitOf( settings, i, made - placeNow, late );
+			else
+				s.wait = 1.0;//a latecomer: its wait is spread below, with the others still waiting
 			slots.push_back( s );
 		}
+		if( late > 0 && !batchOnlyForTest )
+			spreadWaits( settings );
 	}
 	if( !( dt > 0.0 ) )
 		return;
 
+	if( fillLeft > 0.0 )
+	{
+		const double base = std::max( settings.speed, 0.0 );
+		fillLeft          = std::max( 0.0, fillLeft - ( perFrameForTest ? base / 60.0 : base * dt ) );
+	}
 	const double a = wobbleOf( settings );
 	for( size_t i = 0; i < slots.size(); ++i )
 	{
@@ -179,9 +218,9 @@ void Swarm::Step( double dt, const Settings& settings )
 			//of it: the arrival is exact at any frame rate, like the motion.
 			move        = perFrameForTest ? dt : dt - s.wait / base;
 			s.wait      = 0.0;
-			s.path      = settings.path;
 			s.age       = 0.0;
 			s.travelled = 0.0;
+			startGeneration( s, settings );
 		}
 		const Draw d  = drawOf( settings.seed, static_cast< uint32_t >( i ), s.generation );
 		const double v = SpeedOf( settings, static_cast< uint32_t >( i ), s.generation );
@@ -199,7 +238,7 @@ void Swarm::Step( double dt, const Settings& settings )
 			++s.generation;
 			s.age       = 0.0;
 			s.travelled = 0.0;
-			s.path      = settings.path;
+			startGeneration( s, settings );
 		}
 	}
 }
@@ -208,14 +247,17 @@ std::vector< Placed > Swarm::Sprites() const
 {
 	std::vector< Placed > out;
 	out.reserve( slots.size() );
-	const double weave = 0.35 * ( 1.0 - std::clamp( last.stability, 0.0, 1.0 ) );//radians, at Stability 0
-	const double sway  = kTransitWeave * ( 1.0 - std::clamp( last.stability, 0.0, 1.0 ) );//scope radii, at Stability 0
 	for( size_t i = 0; i < slots.size(); ++i )
 	{
 		const Slot& s = slots[ i ];
 		if( s.wait > 0.0 )
 			continue;//a latecomer, not in range yet
-		const Draw d  = drawOf( last.seed, static_cast< uint32_t >( i ), s.generation );
+		const Draw d = drawOf( last.seed, static_cast< uint32_t >( i ), s.generation );
+		//The weave's share of Stability, as it was when this generation
+		//started (v0.2.0 read it live, so a jump of Stability moved sprites).
+		const double loose = weaveLiveForTest ? 1.0 - std::clamp( last.stability, 0.0, 1.0 ) : s.loose;
+		const double weave = 0.35 * loose;         //radians, at Stability 0
+		const double sway  = kTransitWeave * loose;//scope radii, at Stability 0
 		Placed p;
 		if( s.path == Path::Transit )
 		{

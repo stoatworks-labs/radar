@@ -28,6 +28,7 @@ MUTANTS=(
 	"source/Swarm.h|constexpr double kArrivalShare = 0.85;|constexpr double kArrivalShare = 1.85;|--sprite-arrivals|C++: the latecomers' window more than a crossing, 0.85 -> 1.85"
 	"source/Radar.cpp|headIn ? -std::sin( placed.bearing )|headIn ? +std::sin( placed.bearing )|--sprites|C++: Head In mirrored east for west, - -> +"
 	"source/SpriteImage.cpp|sum[ c ] += m * ( p[ c ] / 255.0 );|sum[ c ] += m * ( p[ 2 ] / 255.0 );|--sprite-file|C++: the picture's colour all blue channel, c -> 2"
+	"source/Swarm.cpp|length - kArrivalShare * shortestTrack|length + kArrivalShare * shortestTrack|--sprite-path|C++: the ones on at once past the first stretch of their track, - -> +"
 )
 
 caught=0

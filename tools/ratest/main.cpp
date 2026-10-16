@@ -884,6 +884,10 @@ struct Perturb
 	bool arrivalNaive        = false;///< --sprite-path, --sprite-arrivals: latecomers over one crossing at Sprite Speed
 	bool headInAsFace        = false;///< --sprites: Head In drawn as Face Centre
 	bool colourSwapped       = false;///< --sprite-colour: the picture's colour read as BGR
+	// Found in review: the three rules the first build had.
+	bool staggerWhole = false;///< --sprite-path, --sprite-arrivals: the ones on at once along the whole track, latecomers or not
+	bool weaveLive    = false;///< --sprite-path: the weave read live from Stability every frame
+	bool batchOnly    = false;///< --sprite-path: each rise's latecomers stratified on their own
 };
 
 using CheckFn = int ( * )( const Perturb& );
@@ -3554,7 +3558,8 @@ double arrivalWindowLaw( swarm::Path path, double spread, double stability )
 int runSpritePath( const Perturb& perturb )
 {
 	std::printf( "\n=== sprite-path: Transit runs straight down a chord from the top rim to the bottom rim at Sprite Speed, entered "
-	             "uniformly across the middle 85%%; latecomers come in on their schedule; both the same at any frame rate\n" );
+	             "uniformly across the middle 85%%; latecomers come in on their schedule, all before the first sprite leaves; Stability "
+	             "never moves a sprite; both the same at any frame rate\n" );
 	using swarm::Path;
 	using swarm::Settings;
 	using swarm::Swarm;
@@ -3562,6 +3567,9 @@ int runSpritePath( const Perturb& perturb )
 		sw.SetEntryWideForTest( perturb.transitEntryWide );
 		sw.SetArrivalNaiveForTest( perturb.arrivalNaive );
 		sw.SetTransitNorthForTest( perturb.transitNorth );
+		sw.SetStaggerWholeForTest( perturb.staggerWhole );
+		sw.SetWeaveLiveForTest( perturb.weaveLive );
+		sw.SetBatchOnlyForTest( perturb.batchOnly );
 	};
 	struct Clock
 	{
@@ -3826,9 +3834,11 @@ int runSpritePath( const Perturb& perturb )
 		}
 	}
 
-	//5. The promise: every latecomer is on the scope before the first of them
-	//leaves (with Start With 0, before any sprite leaves), at every Spread and
-	//Stability, on both paths, at steady controls.
+	//5. The promise: from none on the scope, every sprite is on before the
+	//FIRST one leaves -- latecomers and the ones put on at once alike -- at
+	//every Spread and Stability, on both paths, whether Sprite Count jumps
+	//to 32 or is dragged there a step a frame (as Resolume's integer slider
+	//sends it), at steady controls.
 	{
 		int cases = 0, broken = 0;
 		double tightest = 1e30;
@@ -3836,43 +3846,45 @@ int runSpritePath( const Perturb& perturb )
 		for( Path path : { Path::Closing, Path::Transit } )
 			for( double spread : { 0.0, 0.35, 1.0 } )
 				for( double stability : { 1.0, 0.75, 0.0 } )
-					for( int startWith : { 0, 4 } )
-					{
-						Settings s;
-						s.count     = 32;
-						s.seed      = 11;
-						s.speed     = 0.1;
-						s.spread    = spread;
-						s.stability = stability;
-						s.path      = path;
-						s.startWith = startWith;
-						Swarm sw;
-						configure( sw );
-						sw.Step( 0.0, s );
-						double lastIn = -1.0, firstOut = -1.0;
-						std::vector< uint32_t > generation( 32, 0 );
-						for( int f = 1; f < 60 * 120 && firstOut < 0.0; ++f )
+					for( int startWith : { 0, 3, 7 } )
+						for( bool drag : { false, true } )
 						{
-							sw.Step( 1.0 / 60.0, s );
-							const double t = f / 60.0;
-							if( sw.Waiting() > 0 )
-								lastIn = t;
-							for( const swarm::Placed& p : sw.Sprites() )
-								if( static_cast< int >( p.slot ) >= startWith && p.generation > 0 && firstOut < 0.0 )
-									firstOut = t;
+							Settings s;
+							s.count     = drag ? 0 : 32;
+							s.seed      = 11;
+							s.speed     = 0.1;
+							s.spread    = spread;
+							s.stability = stability;
+							s.path      = path;
+							s.startWith = startWith;
+							Swarm sw;
+							configure( sw );
+							sw.Step( 0.0, s );
+							double lastIn = -1.0, firstOut = -1.0;
+							for( int f = 1; f < 60 * 120 && firstOut < 0.0; ++f )
+							{
+								if( drag && s.count < 32 )
+									++s.count;
+								sw.Step( 1.0 / 60.0, s );
+								const double t = f / 60.0;
+								if( sw.Waiting() > 0 || static_cast< int >( sw.Size() ) < 32 )
+									lastIn = t;
+								for( const swarm::Placed& p : sw.Sprites() )
+									if( p.generation > 0 && firstOut < 0.0 )
+										firstOut = t;
+							}
+							++cases;
+							const bool ok = firstOut > 0.0 && lastIn < firstOut;
+							broken += !ok;
+							if( ok )
+								tightest = std::min( tightest, firstOut - lastIn );
+							else if( broken <= 4 )
+								what += fmt( " %s/%.2f/%.2f/%d/%s: last in %.2f s, first out %.2f s;", path == Path::Transit ? "Transit" : "Closing",
+								             spread, stability, startWith, drag ? "drag" : "jump", lastIn, firstOut );
 						}
-						++cases;
-						const bool ok = firstOut > 0.0 && lastIn < firstOut;
-						broken += !ok;
-						if( ok )
-							tightest = std::min( tightest, firstOut - lastIn );
-						else
-							what += fmt( " %s/%.2f/%.2f/%d: last in %.2f s, first out %.2f s;", path == Path::Transit ? "Transit" : "Closing",
-							             spread, stability, startWith, lastIn, firstOut );
-					}
 		Check( broken == 0,
-		       fmt( "%d cases (both paths, Spread 0/0.35/1, Stability 1/0.75/0, Start With 0 and 4, 32 sprites at 0.1 radii/s): in %d of "
-		            "them a latecomer left before the last came in; the closest call %.2f s%s",
+		       fmt( "%d cases (both paths, Spread 0/0.35/1, Stability 1/0.75/0, Start With 0/3/7, Count jumped or dragged to 32 at 0.1 "
+		            "radii/s): in %d of them a sprite left before the last came in; the closest call %.2f s%s",
 		            cases, broken, tightest, what.c_str() ) );
 	}
 
@@ -3948,6 +3960,110 @@ int runSpritePath( const Perturb& perturb )
 		            "swarms on one jittered clock: %d differences; Seed 12 arrives differently on %d frames",
 		            first ? "yes" : "NO", allIn ? "yes" : "NO", rise ? "yes" : "NO", fall ? "yes" : "NO", heldBack ? "yes" : "NO",
 		            released ? "yes" : "NO", differ, order ) );
+	}
+
+	//7. Stability is a rate, never a position: a jump from 1 to 0 (or back)
+	//moves no sprite in the frame it lands on, on either path, because the
+	//weave's share is latched when each generation starts; the next
+	//generation takes the new value and weaves.
+	{
+		double moved = 0.0, swing = 0.0;
+		for( Path path : { Path::Closing, Path::Transit } )
+		{
+			Settings s;
+			s.count     = 8;
+			s.seed      = 11;
+			s.speed     = 0.15;
+			s.stability = 1.0;
+			s.path      = path;
+			Swarm sw;
+			configure( sw );
+			sw.Step( 0.0, s );
+			for( int f = 0; f < 180; ++f )
+				sw.Step( 1.0 / 60.0, s );
+			for( double jump : { 0.0, 1.0, 0.0 } )
+			{
+				const auto before = sw.Sprites();
+				s.stability       = jump;
+				sw.Step( 0.0, s );
+				const auto after = sw.Sprites();
+				for( size_t k = 0; k < before.size() && k < after.size(); ++k )
+					moved = std::max( { moved, std::fabs( after[ k ].x - before[ k ].x ), std::fabs( after[ k ].y - before[ k ].y ) } );
+				for( int f = 0; f < 180; ++f )
+					sw.Step( 1.0 / 60.0, s );
+			}
+			//Stability is 0 now: run on, and a Transit sprite's later generations weave.
+			for( int f = 0; f < 60 * 30; ++f )
+			{
+				sw.Step( 1.0 / 60.0, s );
+				if( path == Path::Transit )
+					for( const swarm::Placed& p : sw.Sprites() )
+						if( p.generation >= 2 )
+							swing = std::max( swing, std::fabs( p.x - Swarm::EntryOf( s.seed, p.slot, p.generation ) ) );
+			}
+		}
+		Check( moved == 0.0 && swing > 0.03,
+		       fmt( "Stability jumped 1 -> 0 -> 1 -> 0 between frames, 8 sprites on each path: the most any moved in the frame of a jump, "
+		            "%.2e radii (must be 0); a later Transit generation weaves %.4f radii across its track",
+		            moved, swing ) );
+	}
+
+	//8. Sprite Count dragged 0 -> 12 a step a frame, Start With 3, steady: one
+	//fill. It began at the first rise; at the last rise (the frame that
+	//starts at 11/60 s) what was left of its window was R = W - 11 v / 60, and
+	//the 9 latecomers, by slot, are spread over it: the j-th comes in inside
+	//the j-th ninth of R. The 3 on at once keep to the outer 15% of the radius
+	//(the first stretch of the chord on Transit); nobody leaves before the last
+	//latecomer is in.
+	for( Path path : { Path::Closing, Path::Transit } )
+	{
+		const double v = 0.1;
+		Settings s;
+		s.seed      = 11;
+		s.speed     = v;
+		s.stability = 1.0;
+		s.path      = path;
+		s.startWith = 3;
+		Swarm sw;
+		configure( sw );
+		sw.Step( 0.0, s );
+		const double W = arrivalWindowLaw( path, 0.0, 1.0 ), R = W - 11.0 * v / 60.0;
+		std::vector< double > arrive( 12, -1.0 );
+		double firstOut = -1.0, outermost = 0.0;
+		for( int f = 1; f < 60 * 60 && firstOut < 0.0; ++f )
+		{
+			if( s.count < 12 )
+				++s.count;
+			sw.Step( 1.0 / 60.0, s );
+			for( const swarm::Placed& p : sw.Sprites() )
+			{
+				if( p.generation > 0 && firstOut < 0.0 )
+					firstOut = f / 60.0;
+				if( arrive[ p.slot ] < 0.0 )
+				{
+					arrive[ p.slot ] = f / 60.0;
+					if( p.slot < 3 )
+						outermost = std::max( outermost, p.progress - v / 60.0 / ( path == Path::Transit ? 2.0 * std::sqrt( 1.0 - p.x * p.x ) : 1.0 ) );
+				}
+			}
+		}
+		int outOfPart = 0;
+		double lastIn = 0.0;
+		std::string when;
+		for( uint32_t i = 3; i < 12; ++i )
+		{
+			const double j = i - 3.0, lower = 11.0 / 60.0 + R * j / 9.0 / v, upper = 11.0 / 60.0 + R * ( j + 1.0 ) / 9.0 / v;
+			outOfPart += !( arrive[ i ] >= lower - 1e-9 && arrive[ i ] - 1.0 / 60.0 < upper + 1e-9 );
+			lastIn = std::max( lastIn, arrive[ i ] );
+			when += fmt( " %.2f", arrive[ i ] );
+		}
+		//On Closing the outer 15% is progress <= 0.15; on Transit the first
+		//L - 0.85 x 1.054 of a chord of length L.
+		Check( outOfPart == 0 && firstOut > lastIn,
+		       fmt( "%s: Count dragged 0 -> 12 a frame at a time, Start With 3: the 9 latecomers came in at%s s, each in its own ninth "
+		            "of what was left of the fill (%d not); the first sprite left at %.2f s, after the last came in at %.2f s; the 3 on at "
+		            "once started at most %.0f%% along",
+		            path == Path::Transit ? "Transit" : "Closing", when.c_str(), outOfPart, firstOut, lastIn, 100.0 * outermost ) );
 	}
 	return Verdict();
 }
@@ -4252,13 +4368,14 @@ int clusters( const std::vector< RadarPlugin::SpriteDraw >& s, double reach )
 int runSpriteArrivals( const Perturb& perturb )
 {
 	std::printf( "\n=== sprite-arrivals: Start With below Sprite Count puts that many on at once and brings the rest in at the rim at "
-	             "their hashed moments; the painted count follows; all are in before the first latecomer leaves; the same twice\n" );
+	             "their hashed moments; the painted count follows; all are in before the first sprite leaves; the same twice\n" );
 	const double bin = 1.0 / kRanges;
 
 	//1. The schedule, steady (Spread 0, Stability 1), so every moment is the
 	//harness's own: Start With 2 of 8 at 0.08 radii/s. Latecomer i comes in
-	//at T_i = wait_i / v, wait_i < W = 0.85 radii; a sprite placed at StartOf( i )
-	//leaves at ( 1 - StartOf( i ) ) / v, a latecomer at T_i + 1 / v. A
+	//at T_i = wait_i / v, wait_i < W = 0.85 radii; a sprite put on at once
+	//starts StartOf( i ) of the outer 15% in and leaves at ( 1 - 0.15 StartOf( i ) ) / v,
+	//a latecomer at T_i + 1 / v. A
 	//rotation with no arrival and no departure in it paints exactly the
 	//sprites on, grouped where their discs touch.
 	for( const Raster& raster : kRasters )
@@ -4269,6 +4386,7 @@ int runSpriteArrivals( const Perturb& perturb )
 		spriteScene( rig, 0.0 );
 		rig.plugin.SetDecayForTest( false );
 		rig.plugin.SetSpriteArrivalNaiveForTest( perturb.arrivalNaive );
+		rig.plugin.SetSpriteStaggerWholeForTest( perturb.staggerWhole );
 		rig.Set( PT_RPM, ParamFromRpm( 120.0 ) );//a rotation is 30 frames
 		rig.Set( PT_SPRITE_COUNT, 8.0f );
 		rig.Set( PT_SPRITE_START, 2.0f );
@@ -4291,8 +4409,10 @@ int runSpriteArrivals( const Perturb& perturb )
 			events.push_back( T );
 			events.push_back( T + 1.0 / v );
 		}
+		//The two on at once keep to the outer 15% of the radius (Start With is
+		//below all of them): StartOf( i ) of it in.
 		for( uint32_t i = 0; i < 2; ++i )
-			events.push_back( ( 1.0 - swarm::Swarm::StartOf( i ) ) / v );
+			events.push_back( ( 1.0 - ( perturb.staggerWhole ? 1.0 : 0.15 ) * swarm::Swarm::StartOf( i ) ) / v );
 		const double reach = 2.0 * 0.25 * SpriteSizeFromParam( ParamFromSpriteSize( 0.04 ) ) + 8.0 * bin;
 		const int rotations = static_cast< int >( std::ceil( 1.15 * W / v / 0.5 ) );
 		if( !rig.Render( 1 ) )
@@ -4333,8 +4453,8 @@ int runSpriteArrivals( const Perturb& perturb )
 	}
 
 	//2. The promise, at the sprites' default Spread and Stability, on
-	//Transit, Start With 0: the painted count reaches Count before any sprite
-	//has left. A latecomer is painted within a rotation of coming in, so the
+	//Transit, Start With 3: the painted count reaches Count before any sprite
+	//has left -- the three on at once included. A latecomer is painted within a rotation of coming in, so the
 	//reading lags by up to two rotations (a second): at 0.06 radii/s the law
 	//leaves 1.5 s between the last arrival and the quickest possible exit.
 	//The first exit comes much later than the picture fills, so it is found
@@ -4351,10 +4471,11 @@ int runSpriteArrivals( const Perturb& perturb )
 			spriteScene( *rig, 0.0 );
 			rig->plugin.SetDecayForTest( false );
 			rig->plugin.SetSpriteArrivalNaiveForTest( perturb.arrivalNaive );
+			rig->plugin.SetSpriteStaggerWholeForTest( perturb.staggerWhole );
 			rig->plugin.SetSpriteWallSeedForTest( perturb.spriteWallSeed );
 			rig->Set( PT_RPM, ParamFromRpm( 120.0 ) );
 			rig->Set( PT_SPRITE_COUNT, 10.0f );
-			rig->Set( PT_SPRITE_START, 0.0f );
+			rig->Set( PT_SPRITE_START, 3.0f );
 			rig->Set( PT_SPRITE_SIZE, ParamFromSpriteSize( 0.03 ) );
 			rig->Set( PT_SPRITE_SPEED, ParamFromSpriteSpeed( 0.06 ) );
 			rig->Set( PT_SPEED_SPREAD, 0.35f );
@@ -4395,9 +4516,10 @@ int runSpriteArrivals( const Perturb& perturb )
 		s.spread    = SpeedSpreadFromParam( 0.35f );
 		s.stability = StabilityFromParam( 0.75f );
 		s.path      = swarm::Path::Transit;
-		s.startWith = 0;
+		s.startWith = 3;
 		swarm::Swarm replica;
 		replica.SetArrivalNaiveForTest( perturb.arrivalNaive );
+		replica.SetStaggerWholeForTest( perturb.staggerWhole );
 		double firstOut = -1.0;
 		bool same       = false;
 		for( int f = 0; f < 60 * 120 && firstOut < 0.0; ++f )
@@ -4416,7 +4538,7 @@ int runSpriteArrivals( const Perturb& perturb )
 					firstOut = f / 60.0;
 		}
 		Check( full > 0.0 && firstOut > 0.0 && full < firstOut && same,
-		       fmt( "%dx%d  Transit, Start With 0 of 10, Spread 0.35, Stability 0.75: a rotation painted all 10 by %.1f s, and the "
+		       fmt( "%dx%d  Transit, Start With 3 of 10, Spread 0.35, Stability 0.75: a rotation painted all 10 by %.1f s, and the "
 		            "first left at %.2f s (the swarm stepped on, which matched the plugin's to the bit at %.2f s: %s)",
 		            raster.w, raster.h, full, firstOut, ( frames - 1 ) / 60.0, same ? "yes" : "NO" ) );
 		Check( differ == 0 && waitDiffer == 0,
@@ -4517,6 +4639,13 @@ int runNegative( bool offlineOnly = false )
 	     []( Perturb& p ) { p.arrivalNaive = true; } );
 	add( "sprite-arrivals", runSpriteArrivals, "salt the sprites' seed from the wall clock",
 	     []( Perturb& p ) { p.spriteWallSeed = true; } );
+	//Found in review: each of the first build's three rules.
+	add( "sprite-path", runSpritePath, "stagger the ones on at once along the whole track, latecomers or not",
+	     []( Perturb& p ) { p.staggerWhole = true; } );
+	add( "sprite-arrivals", runSpriteArrivals, "stagger the ones on at once along the whole track, latecomers or not",
+	     []( Perturb& p ) { p.staggerWhole = true; } );
+	add( "sprite-path", runSpritePath, "read the weave live from Stability every frame", []( Perturb& p ) { p.weaveLive = true; } );
+	add( "sprite-path", runSpritePath, "stratify each rise's latecomers on their own", []( Perturb& p ) { p.batchOnly = true; } );
 
 	if( offlineOnly )
 		cases.erase( std::remove_if( cases.begin(), cases.end(), []( const Case& c ) { return !isOffline( c.name ); } ), cases.end() );
