@@ -88,7 +88,7 @@ Read `AGENTS.md` before touching the sweep (`Sweep.h`), the per-column timing in
   Their motion is `Swarm.cpp` (closed-form in host time); the file is
   `SpriteImage.cpp` (stb_image, `_wfopen_s` + `Utf8ToUtf16` on Windows), loaded
   lazily on the render thread. Sprite Count defaults to 0: off.
-- **Since v0.2.0 (unreleased): Path, Start With, Sprite Colour** appended after Grow On
+- **v0.3.0: Path, Start With, Sprite Colour** appended after Grow On
   Approach (only the About buttons moved), and Head In appended to Orientation. Every default
   is v0.2.0's picture bit for bit (AGENTS.md says how that was shown). Path and the weave's
   share of Stability are latched per generation; Start With is one window per fill, its
@@ -130,16 +130,12 @@ Read `AGENTS.md` before touching the sweep (`Sweep.h`), the per-column timing in
 
 ## Not done yet
 - Never loaded into Resolume on macOS (oxbow selftest only). On Windows: the fleet's
-  Arena gate (see AGENTS.md), at v0.2.0, sprites included. No OpenFX port.
-- **Path, Start With, Head In and Sprite Colour (since v0.2.0, built on `claude/transit`,
-  not released) have never been in Resolume**, on either platform: harness and browser demo only.
-  They need the version bump and release when Allan wants them, and the README's and guide's
-  "not released yet" lines need changing then.
-- **plugin-bench's `arena/expect/radar.json` needs the three new rows** (Path, Start With,
-  Sprite Colour) and Orientation's third element, and `docs/arena-expect.json` (its copy) with
-  it; `ratest --expect` drafts them with notes. The gate can't see Path or Start With change on a
-  running layer (both act only on sprites that start): expect inconclusive or a note-driven
-  sequence, not "live".
+  Arena gate (see AGENTS.md), at v0.3.0, sprites and Transit included. No OpenFX port.
+- **Path, Start With, Head In and Sprite Colour (v0.3.0)** have been in Arena on Windows only (the
+  gate, 17/17 on 3943847, and by hand), never on macOS.
+- plugin-bench's `arena/expect/radar.json` carries the v0.3.0 rows (034d808); the gate can't see
+  Path or Start With change on a running layer (they act only as sprites start), so they read
+  inconclusive, as noted in their rows.
 - Sprites: one picture for all of them; two paths (no sector, no other heading); Picture colour is
   one mean colour, not per-pixel. Still open from radar#5: several files (Steve: no), a flash or
   pass-through at the centre (Transit is his pass-through), more than 32.

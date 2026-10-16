@@ -272,7 +272,8 @@ errors), 2026-10-13.
 Steve's reply on radar#5 (2026-10-15) after v0.2.0, decided with Allan: a second path (the radar
 moving north through still objects, sprites sliding off the bottom), a "start with" count that
 fills the scope over about a crossing, head-first as a third orientation, and the picture's own
-colour "if it is trivial". Built on `claude/transit`; **not released, never in Resolume**.
+colour "if it is trivial". Built on `claude/transit`, released in **v0.3.0** (2026-10-16); in Arena on Windows (the gate,
+17/17 on CI's MSVC build of 3943847, and by hand), never on macOS.
 
 **Parameters**, appended after Grow On Approach and before the About block in both plugins
 (`PT_SPRITE_PATH`, `PT_SPRITE_START`, `PT_SPRITE_COLOUR`), so the Sprites group stays one run and

@@ -32,28 +32,32 @@ east with the trail fading behind it.*
 > the threshold, the count, size and orientation off the painted picture, the speed off the
 > phosphor, the beam revealing them and the phosphor letting them go, the same frame twice), runs
 > in the browser demo, and has been in Resolume Arena on Windows (below), never on macOS.
-> A build of this code (CI's MSVC DLLs from 67e189c, the same but for the version number)
+> A build of the v0.3.0 code (CI's MSVC DLLs from 3943847, the same but for the version number)
 > loads, registers and renders in Resolume Arena 7.27.1 on software rendering (win-lab, Mesa
-> llvmpipe, no GPU, no sound device), with every control matching what the plugins declare (40 and
-> 38 host controls) and Arena's log clean, in the fleet's Arena gate: 17 of 17 checks, with the
+> llvmpipe, no GPU, no sound device), with every control matching what the plugins declare (43 and
+> 41 host controls) and Arena's log clean, in the fleet's Arena gate: 17 of 17 checks, with the
 > audio rows skipped, and the test alien loaded as the Sprite File in both. The sweep turns, so no
 > two grabs of the picture are alike, which puts the gate's noise floor high, and it could only
-> confirm some controls one at a time: 12 of the source's 32 valued controls (Sprite Size and Grow
-> On Approach among them) and 8 of the effect's 31, with the rest inconclusive (none dead). The
-> harness's own sweep (every one of the 65 parameters moves the picture) covers the rest. v0.1.0
-> passed the same gate with 29 and 27 controls.
+> confirm some controls one at a time: 11 of the source's 35 valued controls and 8 of the effect's
+> 34, with the rest inconclusive (none dead). The v0.3.0 controls are among the inconclusive ones,
+> as they would be: Path and Start With only act as sprites start. The harness's own sweep (every
+> one of the 71 parameters moves the picture) covers the rest. v0.2.0 passed the same gate with 40
+> and 38 controls, v0.1.0 with 29 and 27.
 >
-> The sprites were also tried by hand in SW Radar, ten of them: the built-in blip, the test alien
-> as a PNG, the same PNG from a folder named with accents, emoji and katakana, a file that isn't a
-> picture (the blip, and a warning in the plugin's log naming the file and why), the alien as a JPG
-> (read by its brightest channel), then Hue, Saturation and Face Centre. Each one looked as the
-> harness says it should. Software rendering says nothing about a GPU or about speed.
+> The sprites were also tried by hand in SW Radar, ten of them. At v0.2.0: the built-in blip, the
+> test alien as a PNG, the same PNG from a folder named with accents, emoji and katakana, a file
+> that isn't a picture (the blip, and a warning in the plugin's log naming the file and why), the
+> alien as a JPG (read by its brightest channel), then Hue, Saturation and Face Centre. At v0.3.0:
+> Transit with Start With 0 (they trickled in at the top and slid down), the picture's own colour
+> (the alien glowed green), Head In and Face Centre on Transit, then Closing with Start With 3 (three
+> near the rim, the rest arriving) and back to Phosphor. Each one looked as the harness says it
+> should. Software rendering says nothing about a GPU or about speed.
 >
-> **New since v0.2.0, not released yet:** Path, Start With, Head In and Sprite Colour (see the
-> Sprites group). The harness measures them off the painted picture (the Transit track column by
-> column, the count on the scope rotation by rotation, which way up a sprite is, its colour) and
-> they run in the browser demo, but **they haven't been in Resolume yet**, on Windows or macOS.
-> At their defaults the plugins draw exactly what v0.2.0 drew.
+> **New in v0.3.0:** Path, Start With, Head In and Sprite Colour (see the Sprites group). The
+> harness measures them off the painted picture (the Transit track column by column, the count
+> on the scope rotation by rotation, which way up a sprite is, its colour), they run in the
+> browser demo, and they've been in Resolume Arena on Windows (above). At their defaults the
+> plugins draw exactly what v0.2.0 drew.
 >
 > Try it on a spare layer before you put it in a show.
 >
@@ -289,7 +293,7 @@ threw every sprite round in bearing in one frame.)
 
 **Orientation** (*Upright*, *Face Centre*, *Head In*). *Upright*: every sprite the right way up on
 the screen. *Face Centre*: its bottom towards the centre of the scope, like figures standing on a
-globe. *Head In* (new since v0.2.0, not released yet): the other way up, head first towards the
+globe. *Head In* (new in v0.3.0): the other way up, head first towards the
 centre. On Transit both Face Centre and Head In keep facing the centre, so a sprite turns as it
 goes past, quickly if it passes close.
 
@@ -308,7 +312,7 @@ Transit a sprite grows until its closest approach to the centre and shrinks agai
 One that passes right through the middle reaches four times its size; one that crosses near the
 edge barely grows at all.
 
-**Path** (*Closing*, *Transit*; new since v0.2.0, not released yet). *Closing* is what v0.2.0
+**Path** (*Closing*, *Transit*; new in v0.3.0). *Closing* is what v0.2.0
 did: in from anywhere round the rim, straight to the centre. *Transit* is Steve's idea: the radar
 is on a ship heading north through things that aren't moving, so each sprite comes into range at
 the top of the scope, slides straight down past you and leaves at the bottom, and then a new one
@@ -328,7 +332,7 @@ before you raise Sprite Count, or turn the speed up for a moment.
 Transit, fifteen seconds in: each one is sliding south with its old paints stacked above it.
 Rendered by the offline harness.*
 
-**Start With** (0 to 32, default 32; new since v0.2.0, not released yet). How many sprites are on
+**Start With** (0 to 32, default 32; new in v0.3.0). How many sprites are on
 the scope when they start, or when you raise Sprite Count. The rest arrive at the rim (the top, on
 Transit) one at a time, at irregular moments, and every sprite is on the scope before the first one
 leaves. The latecomers arrive within 85% of the quickest crossing anyone could make: the shortest
@@ -346,7 +350,7 @@ With, and the rest arrive the same way; the ones already on carry on as they wer
 0 the latecomers wait with everything else. It only acts when sprites start, so moving it on a
 running layer does nothing until Sprite Count goes up.
 
-**Sprite Colour** (*Phosphor*, *Picture*; new since v0.2.0, not released yet). *Phosphor* is the
+**Sprite Colour** (*Phosphor*, *Picture*; new in v0.3.0). *Phosphor* is the
 phosphor's colours, as above. *Picture* takes the average colour of your picture (the parts that
 count, weighted by how much they count) and glows in that, as bright as the phosphor's colours would
 be. The alien comes out green. The built-in blip has no colour, and a picture whose average is grey
@@ -534,11 +538,8 @@ It records the GL vendor, renderer and version at load, and which shader failed 
   is coloured alike. All sprites share one picture.
 - **Two paths and no more.** Closing (rim to centre) and Transit (top to bottom); no sectors, no
   other headings, no paths of your own.
-- **The new controls haven't been in Resolume.** Path, Start With, Head In and Sprite Colour are new
-  since v0.2.0 and measured only by the harness and seen only in the browser demo. The rest of the
-  Sprites group has been in Arena on Windows (see the top of this guide), never on macOS; the file
-  parameter's dialog there and a path with accents or emoji in it on Windows (widened to UTF-16 for
-  Windows' file API, checked in the harness on macOS only) are untested in a host.
+- **The sprites have been in Resolume only on Windows**, in Arena on software rendering (see the
+  top of this guide), never on macOS; the file parameter's dialog there is untested in a host.
 - **Never loaded into Resolume on macOS.** Everything numeric was compiled, rendered and measured
   offline against the real plugin classes in a headless GL context, plus an `oxbow` load. No real
   audio has reached it in a host: the audio controls were checked with a synthetic spectrum only.

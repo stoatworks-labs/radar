@@ -121,7 +121,7 @@ covering the frame. Rendered by `ratest`.</sub>
   Orientation (*Upright*/*Face Centre*), Hue and Saturation (the phosphor's
   colours turned and scaled for the sprites), Grow On Approach (up to 4x at the
   centre). The user guide says how to make a sprite that reads.
-- **New since v0.2.0, not released yet** (Steve's follow-ups on
+- **New in v0.3.0** (Steve's follow-ups on
   [radar#5](https://github.com/stoatworks-labs/radar/issues/5)): **Path**
   (*Closing*, the rim-to-centre of v0.2.0, or *Transit*: the radar is heading
   north through things that aren't moving, so each sprite comes in at the top,
@@ -140,22 +140,22 @@ rendered by `ratest` rather than captured from Resolume.</sub>
 
 ![Ten alien sprites on Transit: each comes down the scope with a column of fading copies above it, where it has been](docs/transit.png)
 
-<sub>The same ten aliens on Path *Transit* (new since v0.2.0, not released yet), fifteen
+<sub>The same ten aliens on Path *Transit* (new in v0.3.0), fifteen
 seconds in: each one is sliding south with its old paints stacked above it. Rendered by
 `ratest`.</sub>
 
 ## Status
 
-**v0.2.0, released 15 October 2026, and still early days.** There's a
+**v0.3.0, released 16 October 2026, and still early days.** There's a
 [user guide](https://stoatworks-labs.com/software/radar/guide/)
 ([PDF](docs/USER-GUIDE.pdf)) and a [project page](https://stoatworks-labs.com/software/radar/).
 
 **v0.2.0 adds the sprites ([radar#5](https://github.com/stoatworks-labs/radar/issues/5)).**
 They've been in Resolume Arena on Windows (below), never in Resolume on macOS.
 
-**Since v0.2.0, in the source but not released:** Path, Start With, Head In and Sprite
-Colour, from Steve's replies on radar#5. They're measured by the harness (below) and run
-in the browser demo, and **they haven't been in Resolume at all yet**, on either platform.
+**v0.3.0 adds Path, Start With, Head In and Sprite Colour,** from Steve's replies on radar#5.
+They're measured by the harness (below), run in the browser demo, and have been in Resolume
+Arena on Windows (below), never on macOS.
 With every new control at its default the plugins render v0.2.0's picture to the bit:
 the same 8-bit frames through `--pipe`, 600 frames at a time, sprites on and off, both
 plugins, Sprite Count rising and falling mid-run.
@@ -168,22 +168,26 @@ port, but there is a [browser demo](https://radar-demo.stoatworks-labs.com/)
 
 ### In Resolume Arena, on Windows
 
-A build of this code (CI's MSVC DLLs from 67e189c, the same but for the version number)
+A build of the v0.3.0 code (CI's MSVC DLLs from 3943847, the same but for the version number)
 loads, registers and renders in Resolume Arena 7.27.1 on software rendering (win-lab, Mesa
-llvmpipe, no GPU, no sound device), with every control matching what the plugins declare (40 and
-38 host controls) and Arena's log clean, in the fleet's Arena gate: 17 of 17 checks, with the
+llvmpipe, no GPU, no sound device), with every control matching what the plugins declare (43 and
+41 host controls) and Arena's log clean, in the fleet's Arena gate: 17 of 17 checks, with the
 audio rows skipped, and the test alien loaded as the Sprite File in both. The sweep turns, so no
 two grabs of the picture are alike, which puts the gate's noise floor high, and it could only
-confirm some controls one at a time: 12 of the source's 32 valued controls (Sprite Size and Grow
-On Approach among them) and 8 of the effect's 31, with the rest inconclusive (none dead). The
-harness's own sweep (every one of the 65 parameters moves the picture) covers the rest. v0.1.0
-passed the same gate with 29 and 27 controls.
+confirm some controls one at a time: 11 of the source's 35 valued controls and 8 of the effect's
+34, with the rest inconclusive (none dead). The v0.3.0 controls are among the inconclusive ones,
+as they would be: Path and Start With only act as sprites start. The harness's own sweep (every
+one of the 71 parameters moves the picture) covers the rest. v0.2.0 passed the same gate with 40
+and 38 controls, v0.1.0 with 29 and 27.
 
-The sprites were also tried by hand in SW Radar, ten of them: the built-in blip, the test alien
-as a PNG, the same PNG from a folder named with accents, emoji and katakana, a file that isn't a
-picture (the blip, and a warning in the plugin's log naming the file and why), the alien as a JPG
-(read by its brightest channel), then Hue, Saturation and Face Centre. Each one looked as the
-harness says it should. Software rendering says nothing about a GPU or about speed.
+The sprites were also tried by hand in SW Radar, ten of them. At v0.2.0: the built-in blip, the
+test alien as a PNG, the same PNG from a folder named with accents, emoji and katakana, a file
+that isn't a picture (the blip, and a warning in the plugin's log naming the file and why), the
+alien as a JPG (read by its brightest channel), then Hue, Saturation and Face Centre. At v0.3.0:
+Transit with Start With 0 (they trickled in at the top and slid down), the picture's own colour
+(the alien glowed green), Head In and Face Centre on Transit, then Closing with Start With 3 (three
+near the rim, the rest arriving) and back to Phosphor. Each one looked as the harness says it
+should. Software rendering says nothing about a GPU or about speed.
 
 ### What filming the release video found
 
@@ -239,10 +243,8 @@ What **isn't** verified yet:
 
 - **Never in Resolume on macOS**, and on Windows only on software rendering with
   no sound device: its FFT bins and real audio are untested in a host.
-- **The sprites' new controls haven't been in any Resolume.** Path, Start With, Head In
-  and Sprite Colour are measured by the harness and nothing else. v0.2.0's sprites have
-  been in Arena on Windows (above), never on macOS; the file dialog there and a Windows
-  path with accents or emoji in it are still untested in a host.
+- **The sprites have been in Resolume only on Windows**, in Arena on software rendering (above),
+  never on macOS; the file dialog there is untested in a host.
 - **A real P7's afterglow is a power law.** Jankowiak's compilation of the EIA/JEDEC
   phosphor tables (checked for this release) lists P7's long component as an inverse
   power law; here it's an exponential with the time constant you set.

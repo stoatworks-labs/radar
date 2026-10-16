@@ -309,6 +309,39 @@
         "declared": "Grow On Approach"
       },
       {
+        "name": "Path",
+        "type": "ParamChoice",
+        "default": "Closing",
+        "needs": {
+          "Sprite Count": 10.0
+        },
+        "note": "latched per sprite: one in flight finishes on its old path, so a change shows as tracks end (25 s a crossing at the default Sprite Speed); set it before raising Sprite Count, or raise Sprite Speed"
+      },
+      {
+        "name": "Start With",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 32.0,
+        "default": 32,
+        "needs": {
+          "Sprite Count": 10.0
+        },
+        "probe": [
+          0,
+          4
+        ],
+        "note": "acts only when sprites start (a new instance, or Sprite Count rising): on a running layer a probe changes nothing until Sprite Count is raised from below it (the gate's blind spot)"
+      },
+      {
+        "name": "Sprite Colour",
+        "type": "ParamChoice",
+        "default": "Phosphor",
+        "needs": {
+          "Sprite Count": 10.0
+        },
+        "note": "needs a coloured Sprite File to show (tools/fixtures/alien.png is green); the blip and grey pictures fall back to Phosphor"
+      },
+      {
         "name": "About",
         "type": "ParamString",
         "default_pattern": "^Radar\\ v{version}\\ \\-\\ MIT\\ \\-\\ Stoatworks\\ Labs,\\ stoatworks\\-labs\\.com$"
@@ -602,6 +635,39 @@
           "Sprite Count": 10.0
         },
         "declared": "Grow On Approach"
+      },
+      {
+        "name": "Path",
+        "type": "ParamChoice",
+        "default": "Closing",
+        "needs": {
+          "Sprite Count": 10.0
+        },
+        "note": "latched per sprite: one in flight finishes on its old path, so a change shows as tracks end (25 s a crossing at the default Sprite Speed); set it before raising Sprite Count, or raise Sprite Speed"
+      },
+      {
+        "name": "Start With",
+        "type": "ParamRange",
+        "min": 0.0,
+        "max": 32.0,
+        "default": 32,
+        "needs": {
+          "Sprite Count": 10.0
+        },
+        "probe": [
+          0,
+          4
+        ],
+        "note": "acts only when sprites start (a new instance, or Sprite Count rising): on a running layer a probe changes nothing until Sprite Count is raised from below it (the gate's blind spot)"
+      },
+      {
+        "name": "Sprite Colour",
+        "type": "ParamChoice",
+        "default": "Phosphor",
+        "needs": {
+          "Sprite Count": 10.0
+        },
+        "note": "needs a coloured Sprite File to show (tools/fixtures/alien.png is green); the blip and grey pictures fall back to Phosphor"
       },
       {
         "name": "About",
