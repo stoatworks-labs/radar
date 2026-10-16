@@ -21,9 +21,9 @@ east with the trail fading behind it.*
 > degrees; its streak is c tau / 2 long to 8 × 10⁻⁵ of a range bin, running outward; every bearing
 > is painted exactly once a rotation at whole, fractional and jittered frame rates; equal targets
 > fall with range with a slope of −3.9998 against the radar equation's −4, and are flat with STC at
-> n = 4; the phosphor holds its two-term decay to 2 × 10⁻⁷. Twenty models that are wrong on purpose are
-> each shown to fail their check, and one-character mutations of the shipped shaders are caught.
-> All 65 parameters over both plugins are shown to change the picture. **The checks verify the
+> n = 4; the phosphor holds its two-term decay to 2 × 10⁻⁷. Twenty-eight models that are wrong on purpose are
+> each shown to fail their check, and one-character mutations of the shipped shaders and code are caught.
+> All 71 parameters over both plugins are shown to change the picture. **The checks verify the
 > stated model, not a real radar**: the phosphor's time constants are stretched to video rates on
 > purpose, and the synthetic sea is made to look right, not measured (see Known limits).
 > It's **never been loaded into Resolume on macOS**; the one host it's run in there is the
@@ -48,6 +48,13 @@ east with the trail fading behind it.*
 > picture (the blip, and a warning in the plugin's log naming the file and why), the alien as a JPG
 > (read by its brightest channel), then Hue, Saturation and Face Centre. Each one looked as the
 > harness says it should. Software rendering says nothing about a GPU or about speed.
+>
+> **New since v0.2.0, not released yet:** Path, Start With, Head In and Sprite Colour (see the
+> Sprites group). The harness measures them off the painted picture (the Transit track column by
+> column, the count on the scope rotation by rotation, which way up a sprite is, its colour) and
+> they run in the browser demo, but **they haven't been in Resolume yet**, on Windows or macOS.
+> At their defaults the plugins draw exactly what v0.2.0 drew.
+>
 > Try it on a spare layer before you put it in a show.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human author.
@@ -257,41 +264,95 @@ Over reads its clip: light shapes on dark. On the built-in blip, Threshold sets 
 Sprite Size × (1 − Threshold) across.
 
 **Sprite Count** (0 to 32, default 0). How many at once. When one reaches the centre it's gone, and
-a new one starts at the rim on a new bearing. When you turn them on they start spread out along the
-way in, so the scope fills at once rather than with a ring at the edge.
+a new one starts at the rim on a new bearing (on Transit, when one leaves at the bottom a new one
+comes in at the top). When you turn them on they start spread out along the way in, so the scope
+fills at once rather than with a ring at the edge, unless Start With says otherwise.
 
 **Sprite Size** (0.02 to 0.5 of the scope's radius, default 0.1: about 50 pixels on a 1080p scope).
 The picture's longer side. Like the source's contacts it's in scope units, so Range zooms the coast
 and leaves the sprites alone.
 
 **Sprite Speed** (0, then 0.004 to 0.5 of the radius a second; default 0.04, which is 25 seconds
-from the rim to the centre). 0 holds them still.
+from the rim to the centre, and up to 50 seconds across the scope on Transit). 0 holds them still.
 
 **Speed Spread** (0 to 1, default 0.35). At 0 they all come in at Sprite Speed. At 1 each one has
 its own, from a third of it to three times it, drawn afresh each time one starts at the rim.
 
 **Stability** (0 to 1, default 0.75). At 1 each one comes straight in at a steady speed. Lower, and
 its speed surges and sags (between 0.1 and 1.9 times its own at 0) and it weaves from side to side,
-up to 20 degrees of bearing. Speed, Speed Spread and Stability change how fast the sprites are
-going, never where they are, so moving a slider never makes them jump.
+up to 20 degrees of bearing. On Transit the weave is across the track, up to 0.15 of the radius,
+dying away towards the rim so a sprite never wanders off the scope. Speed, Speed Spread and
+Stability change how fast the sprites are going, never where they are, so moving a slider never
+makes them jump.
 
-**Orientation** (*Upright*, *Face Centre*). *Upright*: every sprite the right way up on the screen.
-*Face Centre*: its bottom towards the centre of the scope, like figures standing on a globe.
+**Orientation** (*Upright*, *Face Centre*, *Head In*). *Upright*: every sprite the right way up on
+the screen. *Face Centre*: its bottom towards the centre of the scope, like figures standing on a
+globe. *Head In* (new since v0.2.0, not released yet): the other way up, head first towards the
+centre. On Transit both Face Centre and Head In keep facing the centre, so a sprite turns as it
+goes past, quickly if it passes close.
 
 **Hue** (0 to 1, default 0) and **Saturation** (0 to 1, default 0.5). The sprites glow in the
 phosphor's colours, so on P7 they flash blue-white and fade to yellow-green like everything else.
 Hue turns both colours round the colour wheel (0.33 is a third of the way round); Saturation scales
 how coloured they are: 0 is grey, 0.5 the phosphor's own, 1 twice as strong. At Hue 0 and Saturation
 0.5 a sprite is exactly the colour of every other echo. *I chose to start from the phosphor rather
-than from a colour you pick, so the sprites still look like they're on the same tube.*
+than from a colour you pick, so the sprites still look like they're on the same tube.* With Sprite
+Colour on *Picture*, Hue and Saturation turn and scale the picture's colour instead.
 
 **Grow On Approach** (0 to 1, default 0). At 0 they're the same size all the way in. At 1 a sprite
-is four times Sprite Size by the time it reaches the centre, growing steadily on the way.
+is four times Sprite Size by the time it reaches the centre, growing steadily on the way. It's a
+matter of how far from the centre a sprite is, Sprite Size × (1 + 3 × Grow × (1 − range)), so on
+Transit a sprite grows until its closest approach to the centre and shrinks again on the way out.
+One that passes right through the middle reaches four times its size; one that crosses near the
+edge barely grows at all.
+
+**Path** (*Closing*, *Transit*; new since v0.2.0, not released yet). *Closing* is what v0.2.0
+did: in from anywhere round the rim, straight to the centre. *Transit* is Steve's idea: the radar
+is on a ship heading north through things that aren't moving, so each sprite comes into range at
+the top of the scope, slides straight down past you and leaves at the bottom, and then a new one
+comes in at the top. Where each one crosses is picked at random across the middle 85% of the
+scope's width: evenly across, which is how things scattered over the sea would pass a ship, but
+not hugging the rim, where a track would be a brief scrap of a sprite half off the scope. Only
+the sprites move. The coast, the rain, the clutter and the source's own contacts stay where they
+are, so it's a picture of a radar watching a convoy go by rather than a radar going anywhere.
+Changing Path doesn't move anything already on its way: each sprite finishes on the path it
+started on, and the next one takes the new path. At the default speed that's a while, so set it
+before you raise Sprite Count, or turn the speed up for a moment.
+
+![Ten alien sprites on Transit: each comes down the scope with a column of fading copies above it, where it has been](transit.png)
+
+*SW Radar at its defaults with Sprite Count 10, Sprite Size 0.14, the alien and Path set to
+Transit, fifteen seconds in: each one is sliding south with its old paints stacked above it.
+Rendered by the offline harness.*
+
+**Start With** (0 to 32, default 32; new since v0.2.0, not released yet). How many sprites are on
+the scope when they start, or when you raise Sprite Count. The rest arrive at the rim (the top, on
+Transit) one at a time, at irregular moments, and all of them are on the scope a little before the
+first one leaves. That works out as 85% of the quickest anyone could cross: the shortest track
+(one radius closing, about half the diameter on Transit) at the fastest a sprite can go, which is
+Sprite Speed × 3^Speed Spread with Stability's surge on top. At the defaults that's about twelve
+seconds, and the last one turns up a couple of seconds before anyone could possibly get to the
+other side. The default, 32, means all of them at once, which is what v0.2.0 did. If Sprite Count
+goes up while sprites are already on, only enough appear at once to make up Start With, and the
+rest arrive the same way. At Sprite Speed 0 the latecomers wait with everything else. It only acts
+when sprites start, so moving it on a running layer does nothing until Sprite Count goes up.
+
+**Sprite Colour** (*Phosphor*, *Picture*; new since v0.2.0, not released yet). *Phosphor* is the
+phosphor's colours, as above. *Picture* takes the average colour of your picture (the parts that
+count, weighted by how much they count) and glows in that, as bright as the phosphor's colours would
+be. The alien comes out green. The built-in blip has no colour, and a picture whose average is grey
+(the black-and-white panda, say) has none to give, so both stay Phosphor. It's one colour per
+picture, not the picture's colours pixel by pixel: a radar still can't tell what colour anything is.
 
 ### Making a good sprite
 
 - **A PNG with transparency.** The radar sees a silhouette: the shape where the alpha is over Sprite
-  Threshold. The colours inside the shape are ignored; Hue and Saturation colour it instead.
+  Threshold. The colours inside the shape are ignored; Hue and Saturation colour it instead (or,
+  with Sprite Colour on *Picture*, its average colour does).
+- **Pulse Length all the way down keeps the picture whole.** Steve's tip from radar#5: the pulse
+  smears every echo outward, and at the default 2 µs a detailed sprite turns into a smudge. Take
+  Pulse Length to the bottom and it's recognisable again. Lowering Beamwidth does the same for the
+  sideways smear.
 - **Holes count.** Make eyes, mouths and gaps transparent if you want them to show. The alien in the
   repository's `tools/fixtures/` has its eyes cut out; the panda's eye patches are opaque, so it's
   a silhouette with ears.
@@ -351,7 +412,8 @@ picture's sake.*
   value at its bearing's last paint, and the decay since then is computed exactly on the CPU for
   every bearing and applied when the scope is drawn, so it is exact at any frame count.
 - **Sprites** are reflectivity, like the coast: each frame the CPU moves them (in double precision,
-  from the host's clock, so the same clock gives the same frame), and the pass that resamples the
+  from the host's clock, so the same clock gives the same frame, on either path, and a latecomer
+  arrives at the same moment at any frame rate), and the pass that resamples the
   surface into range and bearing samples each sprite's picture there too, averaged over the pulse;
   the paint convolves it with the beam. The phosphor keeps the sprites' share of every echo beside
   the whole, decaying the same way, which is what lets Hue and Saturation colour them alone.
@@ -403,6 +465,15 @@ by its brightest channel. Save it with a transparent background, or put it light
 **My sprite is a blob.** It's too detailed for the beam: see *Making a good sprite*, or lower
 Beamwidth and Pulse Length.
 
+**I changed Path and nothing happened.** Sprites already on their way finish on the path they
+started on. Wait for them, or raise Sprite Speed for a moment, or set Sprite Count to 0 and back.
+
+**Start With does nothing.** It only acts when sprites start: set Sprite Count to 0, choose Start
+With, then raise Sprite Count.
+
+**Sprite Colour Picture looks like Phosphor.** The picture's average is grey, or it's the built-in
+blip. Neither has a colour to give.
+
 **Old echoes linger after a change.** The phosphor keeps what it was painted until the sweep comes
 round, and with a long Persistence for longer.
 
@@ -450,12 +521,15 @@ It records the GL vendor, renderer and version at load, and which shader failed 
 - **No sector scan**: Direction is clockwise or anticlockwise, never back and forth over an arc.
 - **Ships and aircraft share one speed range**, in scope units.
 - **Sprites are silhouettes.** The radar sees a shape, not a picture: the colours of your file are
-  thrown away, and Hue and Saturation colour every sprite alike. All sprites share one picture.
-- **Sprites only come in.** They start at the rim and end at the centre; there's no going out, no
-  crossing, no paths of your own.
-- **The sprites have never been in Resolume.** The file parameter's dialog, a path with accents or
-  emoji in it on Windows (widened to UTF-16 for Windows' file API, checked in the harness on macOS
-  only), and how the eleven new controls present in Arena are all untested in a host.
+  thrown away (Sprite Colour's *Picture* keeps their average and nothing else), and every sprite
+  is coloured alike. All sprites share one picture.
+- **Two paths and no more.** Closing (rim to centre) and Transit (top to bottom); no sectors, no
+  other headings, no paths of your own.
+- **The new controls haven't been in Resolume.** Path, Start With, Head In and Sprite Colour are new
+  since v0.2.0 and measured only by the harness and seen only in the browser demo. The rest of the
+  Sprites group has been in Arena on Windows (see the top of this guide), never on macOS; the file
+  parameter's dialog there and a path with accents or emoji in it on Windows (widened to UTF-16 for
+  Windows' file API, checked in the harness on macOS only) are untested in a host.
 - **Never loaded into Resolume on macOS.** Everything numeric was compiled, rendered and measured
   offline against the real plugin classes in a headless GL context, plus an `oxbow` load. No real
   audio has reached it in a host: the audio controls were checked with a synthetic spectrum only.

@@ -121,11 +121,27 @@ covering the frame. Rendered by `ratest`.</sub>
   Orientation (*Upright*/*Face Centre*), Hue and Saturation (the phosphor's
   colours turned and scaled for the sprites), Grow On Approach (up to 4x at the
   centre). The user guide says how to make a sprite that reads.
+- **New since v0.2.0, not released yet** (Steve's follow-ups on
+  [radar#5](https://github.com/stoatworks-labs/radar/issues/5)): **Path**
+  (*Closing*, the rim-to-centre of v0.2.0, or *Transit*: the radar is heading
+  north through things that aren't moving, so each sprite comes in at the top,
+  slides straight down and leaves at the bottom), **Start With** (0–32: how many
+  are on the scope when the sprites start; the rest come in at the rim one at a
+  time and are all on before the first one leaves; 32, the default, is all of
+  them at once, as before), a third Orientation, *Head In* (the top towards the
+  centre), and **Sprite Colour** (*Phosphor*, as before, or *Picture*: the
+  picture's average colour). Every default does exactly what v0.2.0 did.
 
 ![Ten alien sprites closing on the centre of SW Radar, each leaving fading copies of itself along its track](docs/sprites.png)
 
 <sub>SW Radar with ten sprites of the repository's test alien (`tools/fixtures/alien.png`),
 rendered by `ratest` rather than captured from Resolume.</sub>
+
+![Ten alien sprites on Transit: each comes down the scope with a column of fading copies above it, where it has been](docs/transit.png)
+
+<sub>The same ten aliens on Path *Transit* (new since v0.2.0, not released yet), fifteen
+seconds in: each one is sliding south with its old paints stacked above it. Rendered by
+`ratest`.</sub>
 
 ## Status
 
@@ -135,6 +151,13 @@ rendered by `ratest` rather than captured from Resolume.</sub>
 
 **v0.2.0 adds the sprites ([radar#5](https://github.com/stoatworks-labs/radar/issues/5)).**
 They've been in Resolume Arena on Windows (below), never in Resolume on macOS.
+
+**Since v0.2.0, on `main` but not released:** Path, Start With, Head In and Sprite
+Colour, from Steve's replies on radar#5. They're measured by the harness (below) and run
+in the browser demo, and **they haven't been in Resolume at all yet**, on either platform.
+With every new control at its default the plugins render v0.2.0's picture to the bit:
+the same 8-bit frames through `--pipe`, 600 frames at a time, sprites on and off, both
+plugins, Sprite Count rising and falling mid-run.
 
 It's **never been loaded into Resolume on macOS**. `oxbow probe` reads the
 bundles as a host does (`SW Radar` / `RA01` / source, `SW Radar Over` / `RA02` /
@@ -193,9 +216,13 @@ What's measured, on this Mac, at 1280x720 and 320x180 on the GPU and at
 | sprite beam | a sprite is 0 on the phosphor until the sweep first reaches it, then its share decays by the two-term law to 2×10⁻⁷ and its flash returns when the sweep does |
 | sprite repeat | two instances, twelve wandering, growing, tinted alien sprites over clutter and noise: the same frame to the bit |
 | sprite colour | Hue 1/3 is the untinted light turned 120 degrees, Saturation 0.75 its chroma x1.5, Saturation 0 grey, each to 10⁻⁶ |
-| negative controls | **20** deliberately wrong models, **all 20** detected |
-| mutants | **6** one-character changes (four GLSL, two C++), **all 6** caught |
-| dead controls | **65** parameters over both plugins, all live |
+| transit (new) | read off the phosphor column by column at 60 and 24 fps, a sprite runs straight down its chord: every painted column within 0.25 range bins of the track, the fitted speed 0.24999–0.25000 radii/s against 0.25, its x within 0.04 bins of the entry point; it leaves at the bottom rim on the frame the law says and the next comes in at the top rim; on the CPU the law holds to 10⁻¹⁴ at 60, 24, 59.94 fps and jittered frames; 2,273 entry points are uniform over the middle 85% (Kolmogorov-Smirnov 0.013 against 0.034); the weave at Stability 0 is across the track only and never leaves the scope; Grow On Approach on Transit follows the range law to under 0.6 range bins |
+| start with (new) | Start With 2 of 8: the count painted each rotation is the schedule's in all 18 rotations with no arrival or exit in them, rising 2, 4, 5, 6, 8; in 36 cases over both paths, every Spread and Stability, nobody leaves before the last latecomer is in (closest call 1.7 s); a latecomer comes in at the rim on its exact moment at any frame rate (to 10⁻¹⁴); Sprite Speed 0 holds them back; two instances paint the same phosphor |
+| head in (new) | the top-half sprite's light sits within 0.6 degrees of inward on both paths, and the asymmetric alien's within 0.9 degrees, at 98–102% of its silhouette's offset |
+| picture colour (new) | the alien's sprites glow its own green, (115, 242, 89) / 255, to 3×10⁻⁷ in chromaticity, and Hue turns that; on Phosphor every sprite pixel is the phosphor's flash and afterglow to 4×10⁻⁷; the blip and the grey panda on Picture draw exactly what Phosphor does |
+| negative controls | **28** deliberately wrong models, **all 28** detected |
+| mutants | **10** one-character changes (four GLSL, six C++), **all 10** caught |
+| dead controls | **71** parameters over both plugins, all live |
 
 Render cost (`ratest --bench`, the defaults, the median frame, on a machine
 shared with other builds): **SW Radar 0.34 ms at 720p, 0.39 at 1080p, 0.74 at
@@ -203,14 +230,17 @@ shared with other builds): **SW Radar 0.34 ms at 720p, 0.39 at 1080p, 0.74 at
 GPU paints only the wedge the antenna swept; the decay is timed per bearing on
 the CPU. Sixteen sprites add nothing measurable to those numbers on this GPU; on
 Apple's software renderer twelve big ones cost about an eighth of a second a frame at 320x180.
+At 1080p with sixteen aliens, Transit costs what Closing does: 0.42 against 0.47 ms on
+SW Radar and 0.46 against 0.58 on SW Radar Over, inside the bench's noise.
 
 What **isn't** verified yet:
 
 - **Never in Resolume on macOS**, and on Windows only on software rendering with
   no sound device: its FFT bins and real audio are untested in a host.
-- **The sprites have never been in any Resolume.** The file dialog, a Windows path
-  with accents or emoji in it (the widening is checked, the file open is not), and
-  how the eleven new controls present in Arena are untested in a host.
+- **The sprites' new controls haven't been in any Resolume.** Path, Start With, Head In
+  and Sprite Colour are measured by the harness and nothing else. v0.2.0's sprites have
+  been in Arena on Windows (above), never on macOS; the file dialog there and a Windows
+  path with accents or emoji in it are still untested in a host.
 - **A real P7's afterglow is a power law.** Jankowiak's compilation of the EIA/JEDEC
   phosphor tables (checked for this release) lists P7's long component as an inverse
   power law; here it's an exponential with the time constant you set.
@@ -240,8 +270,8 @@ and its crossed-bin rule, the per-column crossing timing, the clock, the
 contacts and the rain's drift, the sprites' motion and mask, and every
 conversion) is a JavaScript port in `demo/plugin.js` that **nothing checks but a
 reader**. There's no audio in a browser, so Audio, Audio Strobe and Audio
-Contacts are missing, and Contacts, Seed and Sprite Count are dropdowns (Seed
-0–99). Sprite File is a choice of the blip and the two test sprites, plus a
+Contacts are missing, and Contacts, Seed, Sprite Count and Start With are
+dropdowns (Seed 0–99). Sprite File is a choice of the blip and the two test sprites, plus a
 button to use a picture of your own, which never leaves the page. The Over runs
 on the page's generated clips.
 It's a demo rather than the plugin, and the page says what it doesn't reproduce.
@@ -278,8 +308,10 @@ The offline harness renders the real plugin classes headlessly:
     ./build/ratest --sprite-speed a sprite closes at Sprite Speed, read off the phosphor
     ./build/ratest --sprite-beam  dark until the sweep, then the phosphor's decay
     ./build/ratest --sprite-repeat      the same settings and clock, the same frame
-    ./build/ratest --sprite-colour      Hue turns the phosphor's colours, Saturation scales them
-    ./build/ratest --sprite-utf16 --sprite-motion   (no GL) the Windows path, the motion law
+    ./build/ratest --sprite-colour      Hue turns the phosphor's colours, Saturation scales them; Picture's colour
+    ./build/ratest --sprite-transit     Transit's straight southward track, read off the phosphor
+    ./build/ratest --sprite-arrivals    Start With: the painted count follows the arrival schedule
+    ./build/ratest --sprite-utf16 --sprite-motion --sprite-path   (no GL) the Windows path, the motion laws
     ./build/ratest --sweep-law --cues --names   (no GL)
     ./build/ratest --negative     every check above, against a wrong model
     ./build/ratest --offline      the no-GL subset and its negative controls (what CI runs)
