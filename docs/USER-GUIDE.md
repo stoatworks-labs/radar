@@ -314,7 +314,8 @@ comes in at the top. Where each one crosses is picked at random across the middl
 scope's width: evenly across, which is how things scattered over the sea would pass a ship, but
 not hugging the rim, where a track would be a brief scrap of a sprite half off the scope. Only
 the sprites move. The coast, the rain, the clutter and the source's own contacts stay where they
-are, so it's a picture of a radar watching a convoy go by rather than a radar going anywhere.
+are, so strictly it's a radar watching a convoy steam south rather than one going anywhere. With
+Land at 0 nobody can tell.
 Changing Path doesn't move anything already on its way: each sprite finishes on the path it
 started on, and the next one takes the new path. At the default speed that's a while, so set it
 before you raise Sprite Count, or turn the speed up for a moment.
@@ -328,9 +329,9 @@ Rendered by the offline harness.*
 **Start With** (0 to 32, default 32; new since v0.2.0, not released yet). How many sprites are on
 the scope when they start, or when you raise Sprite Count. The rest arrive at the rim (the top, on
 Transit) one at a time, at irregular moments, and all of them are on the scope a little before the
-first one leaves. That works out as 85% of the quickest anyone could cross: the shortest track
-(one radius closing, about half the diameter on Transit) at the fastest a sprite can go, which is
-Sprite Speed × 3^Speed Spread with Stability's surge on top. At the defaults that's about twelve
+first one leaves. They arrive within 85% of the quickest crossing anyone could make: the shortest
+track (one radius closing, about half the diameter on Transit) at the fastest a sprite can go, which
+is Sprite Speed × 3^Speed Spread with Stability's surge on top. At the defaults that's about twelve
 seconds, and the last one turns up a couple of seconds before anyone could possibly get to the
 other side. The default, 32, means all of them at once, which is what v0.2.0 did. If Sprite Count
 goes up while sprites are already on, only enough appear at once to make up Start With, and the

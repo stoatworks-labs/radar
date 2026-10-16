@@ -41,7 +41,7 @@ Read `AGENTS.md` before touching the sweep (`Sweep.h`), the per-column timing in
   `plugin-bench/arena/expect/radar.json` (seeded from the running Arena).
 
 ## Verify
-- Everything: `tools/verify.sh` (~3 min: reserved words, no unbounded trig in the
+- Everything: `tools/verify.sh` (~7 min: reserved words, no unbounded trig in the
   GLSL, glslc, fresh universal build, both bundles through
   lipo/plist/codesign/oxbow probe+selftest, every check at 1280x720 and 320x180,
   the same checks on Apple's software renderer at 320x180, the offline set, the
@@ -129,8 +129,8 @@ Read `AGENTS.md` before touching the sweep (`Sweep.h`), the per-column timing in
 ## Not done yet
 - Never loaded into Resolume on macOS (oxbow selftest only). On Windows: the fleet's
   Arena gate (see AGENTS.md), at v0.2.0, sprites included. No OpenFX port.
-- **Path, Start With, Head In and Sprite Colour (on `claude/transit`, not merged, not
-  released) have never been in Resolume**, on either platform: harness and browser demo only.
+- **Path, Start With, Head In and Sprite Colour (since v0.2.0, built on `claude/transit`,
+  not released) have never been in Resolume**, on either platform: harness and browser demo only.
   They need the version bump and release when Allan wants them, and the README's and guide's
   "not released yet" lines need changing then.
 - **plugin-bench's `arena/expect/radar.json` needs the three new rows** (Path, Start With,
